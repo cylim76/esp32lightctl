@@ -48,6 +48,13 @@ input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;
  <p class="muted">需要管理员认证。设备会清除旧 Wi-Fi 凭据并重启到随机 WPA2 临时配置热点；热点密码仅显示在 USB 串口。</p>
 </section>
 
+<section class="card"><h2>配置备份与恢复</h2>
+ <p class="muted">用于更换开发板时恢复三路照明定时、全部节能任务和两组 LG 明确 OFF 红外码。备份不包含 Wi-Fi/管理员密码、RainMaker 凭据、Zigbee 网络密钥、配对数据或端点映射；新网关必须重新配对并确认端点。</p>
+ <div class="row"><button onclick="exportBackup()">导出配置 JSON</button><label>选择备份文件<input id="backupFile" type="file" accept="application/json,.json"></label><button onclick="validateBackup()">验证导入文件</button><button id="backupCommitButton" onclick="commitBackup()" disabled>确认并恢复</button></div>
+ <div id="backupStatus" class="diag" style="margin-top:12px">尚未选择备份文件</div>
+ <p class="muted">安全提示：本页面使用 HTTP Basic，没有 TLS。只可在可信的办公室本地网络、隔离 VLAN 或其他安全通道中操作；不要在公共或不受信网络上传备份。文件上限 48 KiB，连续上传至少间隔 10 秒。</p>
+</section>
+
 <section class="card"><h2>时间管理（北京时间 UTC+8）</h2>
  <div id="timeInfo" class="diag">加载中…</div>
  <div class="row" style="margin-top:14px"><button id="ntpButton" onclick="syncNtp()">立即 NTP 校时</button><label>手动设置北京时间<input id="manualTime" type="datetime-local" step="1"></label><button onclick="setManualTime()">设置 ESP32 和 DS3231</button></div>
@@ -75,7 +82,7 @@ input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;
 </section></div>
 </main><div id="toast"></div>
 <script>
-const names=['左','中','右'],dayNames=['日','一','二','三','四','五','六'],scheduleTargets=['左路照明','中路照明','右路照明','全部照明','LG 空调1','LG 空调2','LG 空调组'];let firstSchedule=true,firstIr=true,provisionNameSet=false,maxSchedulesPerTarget=8,currentStage=1;
+const names=['左','中','右'],dayNames=['日','一','二','三','四','五','六'],scheduleTargets=['左路照明','中路照明','右路照明','全部照明','LG 空调1','LG 空调2','LG 空调组'];let firstSchedule=true,firstIr=true,provisionNameSet=false,maxSchedulesPerTarget=8,currentStage=1,backupToken='';
 const $=id=>document.getElementById(id);const toast=(m,bad=false)=>{let e=$('toast');e.textContent=m;e.style.display='block';e.style.background=bad?'#7a3038':'#253250';setTimeout(()=>e.style.display='none',3500)};
 async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});let j;try{j=await r.json()}catch{j={error:await r.text()}}if(!r.ok)throw Error(j.error||r.statusText);return j}
 function dots(id,ok){$(id).classList.toggle('ok',!!ok)}
@@ -91,6 +98,9 @@ async function refresh(){try{let s=await api('/api/status');$('provision').hidde
 async function provision(){try{await api('/api/provision',{ssid:$('ssid').value,password:$('wifiPass').value,device_name:$('deviceName').value,admin_user:$('adminUser').value,admin_password:$('adminPass').value});toast('已保存，设备正在重启')}catch(e){toast(e.message,true)}}
 async function reconfigureWifi(){if(!confirm('确认清除当前 Wi-Fi 凭据并重启到临时配置热点？热点密码需要从 USB 串口查看。'))return;try{await api('/api/wifi/reconfigure',{confirm:'RECONFIGURE'});toast('设备将重启到临时配置热点')}catch(e){toast(e.message,true)}}
 async function factoryReset(){let value=prompt('危险操作：将永久擦除所有用户配置、Zigbee 网络和红外码。若确认，请完整输入 ERASE_ALL_USER_DATA');if(value!=='ERASE_ALL_USER_DATA'){toast('未执行恢复出厂设置',true);return}try{await api('/api/storage/factory-reset',{confirm:value});toast('用户数据已擦除，设备正在重启')}catch(e){toast(e.message,true)}}
+function exportBackup(){if(!confirm('仅在可信本地网络中下载配置备份。继续导出？'))return;window.location.href='/api/backup/export'}
+async function validateBackup(){let file=$('backupFile').files[0];backupToken='';$('backupCommitButton').disabled=true;if(!file){toast('请选择 JSON 备份文件',true);return}if(file.size<1||file.size>49152){toast('备份文件必须小于或等于 48 KiB',true);return}if(!confirm('确认在可信本地网络中上传此备份进行只读验证？验证阶段不会改写配置。'))return;$('backupStatus').textContent='正在验证格式、兼容性、范围和 SHA-256…';try{let r=await fetch('/api/backup/import/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:file});let j;try{j=await r.json()}catch{j={error:await r.text()}}if(!r.ok)throw Error(j.error||r.statusText);backupToken=j.token;$('backupCommitButton').disabled=false;$('backupStatus').textContent=`验证通过，尚未写入\n定时任务：${j.schedules}\nIR OFF 码：${j.ir_codes}\n扩展配置段：${j.extension_sections}\n跳过段：${j.skipped_sections}\nZigbee：${j.requires_zigbee_repair?'必须重新配对/发现/确认端点':'—'}\n${j.message}`;toast('备份验证通过，请再次确认后恢复')}catch(e){$('backupStatus').textContent=`验证失败：${e.message}\n原配置未改变`;toast(e.message,true)}}
+async function commitBackup(){if(!backupToken){toast('请先验证备份文件',true);return}if(!confirm('确认提交已验证配置？Wi-Fi、管理员账户、Zigbee 网络和 RainMaker 身份不会被擦除；新板仍需重新配对 Zigbee。'))return;try{let j=await api('/api/backup/import/commit',{token:backupToken,confirm:'RESTORE_CONFIG'});backupToken='';$('backupCommitButton').disabled=true;$('backupStatus').textContent=`恢复完成\n定时任务：${j.schedules}\nIR OFF 码：${j.ir_codes}\n跳过段：${j.skipped_sections}\n需要重新配对：${j.requires_zigbee_repair?'是':'否'}\n${j.message}`;toast('配置恢复完成；请重新配对并验证设备');firstSchedule=true;setTimeout(()=>location.reload(),2500)}catch(e){$('backupStatus').textContent=`恢复失败：${e.message}\n原配置已保留，或安全回滚日志将在重启时恢复`;toast(e.message,true)}}
 async function syncNtp(){try{await api('/api/time/ntp',{});toast('NTP 校时已提交')}catch(e){toast(e.message,true)}}
 async function setManualTimeFrom(id){let text=$(id).value,m=text.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);if(!m){toast('请选择完整的北京时间',true);return}if(!confirm(`确认把 ESP32 和可用的 DS3231 设置为北京时间 ${text}？`))return;try{await api('/api/time/manual',{year:+m[1],month:+m[2],day:+m[3],hour:+m[4],minute:+m[5],second:+(m[6]||0)});toast('时间已设置；请检查 DS3231 状态');refresh()}catch(e){toast(e.message,true)}}
 async function setManualTime(){return setManualTimeFrom('manualTime')}

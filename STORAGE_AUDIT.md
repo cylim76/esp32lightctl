@@ -62,7 +62,10 @@ Stage 5 在 `coredump` 后增加 `ir_data`（`0x361000`，64 KiB），`runtime_n
 - `settings.c`：Wi-Fi、设备名、管理员凭据、定时配置。
 - `zigbee_manager.c`：`devices_v2` 设备/映射快照。
 - `scheduler.c`：`runtime_nvs` 中的单项 `exNN` 记录。
+- `backup_restore.c`：仅在管理员确认导入时向 `runtime_nvs/backup_tx/rollback` 写入一次约 5 KiB 的导入前快照；成功提交或成功回滚后删除。它用于跨主 NVS/IR NVS 的断电恢复，不是持续日志。
 - `ir_storage.c`：两个红外码与旧式红外 schedule。
+
+配置导入不会写入或擦除 Zigbee 分区、Wi-Fi/账户 key、RainMaker 身份或整个 NVS。导入前 JSON 全量验证；事务中断时在 `settings_init()` 之前恢复旧任务和 IR 码。真实拔电测试仍为 NOT TESTED。
 - `storage_manager.c`：仅用户明确确认的恢复出厂设置，以及恢复标记。
 - 没有应用文件系统写入、持久化调试日志或一般路径中的 `esp_partition_write()`。
 

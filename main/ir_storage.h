@@ -6,6 +6,7 @@
 esp_err_t ir_storage_init(void);
 esp_err_t ir_storage_load_code(uint8_t slot, ir_code_t *code);
 esp_err_t ir_storage_save_code(uint8_t slot, const ir_code_t *code);
+esp_err_t ir_storage_delete_code(uint8_t slot);
 bool ir_storage_code_exists(uint8_t slot);
 esp_err_t ir_storage_load_schedule(ir_schedule_t *schedule);
 esp_err_t ir_storage_save_schedule(const ir_schedule_t *schedule);

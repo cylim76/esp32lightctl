@@ -57,3 +57,5 @@ esp_err_t ir_manager_submit_send(uint8_t slot_mask, uint8_t repeats, const char 
                                  uint32_t *task_id);
 esp_err_t ir_manager_get_task_result(uint32_t task_id, ir_task_result_t *result);
 void ir_manager_get_status(ir_status_t *status);
+bool ir_manager_storage_busy(void);
+esp_err_t ir_manager_refresh_storage(void);

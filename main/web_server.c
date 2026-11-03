@@ -4,6 +4,8 @@
 #include <string.h>
 #include <time.h>
 #include "cJSON.h"
+#include "app_config.h"
+#include "backup_restore.h"
 #include "diagnostics.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
@@ -25,7 +27,6 @@
 #include "scheduler.h"
 #endif
 #if LIGHTGW_HAS_IR
-#include "app_config.h"
 #include "ir_manager.h"
 #endif
 #if LIGHTGW_HAS_ZIGBEE
@@ -34,6 +35,7 @@
 
 static const char *TAG = "web";
 static httpd_handle_t s_server;
+static int64_t s_last_backup_upload_us;
 extern const unsigned char index_html_start[] asm("_binary_index_html_start");
 extern const unsigned char index_html_end[] asm("_binary_index_html_end");
 
@@ -111,6 +113,120 @@ static cJSON *receive_json(httpd_req_t *req)
     cJSON *json = cJSON_Parse(body);
     free(body);
     return json;
+}
+
+static char *receive_body(httpd_req_t *req, size_t maximum, size_t *length_out)
+{
+    if (!length_out || req->content_len <= 0 || (size_t)req->content_len > maximum) return NULL;
+    char *body = calloc(1, req->content_len + 1);
+    if (!body) return NULL;
+    int total = 0;
+    while (total < req->content_len) {
+        int received = httpd_req_recv(req, body + total, req->content_len - total);
+        if (received <= 0) {
+            free(body);
+            return NULL;
+        }
+        total += received;
+    }
+    *length_out = total;
+    return body;
+}
+
+static bool backup_authorized(httpd_req_t *req)
+{
+    if (!settings_get()->auth_configured) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_sendstr(req, "Administrator account must be configured first");
+        return false;
+    }
+    return authorized(req);
+}
+
+static esp_err_t send_backup_summary(httpd_req_t *req, const backup_import_summary_t *summary,
+                                     bool committed)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddTrueToObject(root, "ok");
+    cJSON_AddBoolToObject(root, "committed", committed);
+    if (!committed) cJSON_AddStringToObject(root, "token", summary->token);
+    cJSON_AddNumberToObject(root, "schedules", summary->schedules);
+    cJSON_AddNumberToObject(root, "ir_codes", summary->ir_codes);
+    cJSON_AddNumberToObject(root, "extension_sections", summary->extension_sections);
+    cJSON_AddNumberToObject(root, "skipped_sections", summary->skipped_sections);
+    cJSON_AddBoolToObject(root, "ir_section_available", summary->ir_section_available);
+    cJSON_AddBoolToObject(root, "requires_zigbee_repair", summary->requires_zigbee_repair);
+    cJSON_AddStringToObject(root, "message", summary->message);
+    char *text = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = text ? httpd_resp_sendstr(req, text) : ESP_ERR_NO_MEM;
+    free(text);
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t backup_export_get(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    char *json = NULL;
+    size_t length = 0;
+    char filename[80];
+    esp_err_t err = backup_restore_export_json(&json, &length, filename, sizeof(filename));
+    if (err != ESP_OK) return send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+    char disposition[112];
+    snprintf(disposition, sizeof(disposition), "attachment; filename=\"%s\"", filename);
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", disposition);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    err = httpd_resp_send(req, json, length);
+    free(json);
+    return err;
+}
+
+static esp_err_t backup_validate_post(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    int64_t now = esp_timer_get_time();
+    if (s_last_backup_upload_us &&
+        now - s_last_backup_upload_us < (int64_t)APP_BACKUP_UPLOAD_MIN_INTERVAL_MS * 1000) {
+        return send_json_error(req, "429 Too Many Requests", "Wait 10 seconds before another backup upload");
+    }
+    s_last_backup_upload_us = now;
+    if (req->content_len <= 0 || req->content_len > BACKUP_MAX_FILE_BYTES) {
+        return send_json_error(req, "413 Payload Too Large", "Backup must be 1..49152 bytes");
+    }
+    size_t length = 0;
+    char *body = receive_body(req, BACKUP_MAX_FILE_BYTES, &length);
+    if (!body) return send_json_error(req, "400 Bad Request", "Backup upload was incomplete");
+    backup_import_summary_t summary = {0};
+    esp_err_t err = backup_restore_validate_import(body, length, &summary);
+    free(body);
+    if (err == ESP_ERR_INVALID_CRC) return send_json_error(req, "422 Unprocessable Entity", "Backup integrity check failed");
+    if (err == ESP_ERR_NOT_SUPPORTED) return send_json_error(req, "409 Conflict", "Backup format or firmware schema is incompatible");
+    if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "Backup JSON or data ranges are invalid");
+    return send_backup_summary(req, &summary, false);
+}
+
+static esp_err_t backup_commit_post(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *token = json ? cJSON_GetObjectItem(json, "token") : NULL;
+    cJSON *confirm = json ? cJSON_GetObjectItem(json, "confirm") : NULL;
+    if (!cJSON_IsString(token) || strlen(token->valuestring) != BACKUP_IMPORT_TOKEN_LENGTH ||
+        !cJSON_IsString(confirm) || strcmp(confirm->valuestring, "RESTORE_CONFIG") != 0) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "Validated token and RESTORE_CONFIG confirmation required");
+    }
+    char saved_token[BACKUP_IMPORT_TOKEN_LENGTH + 1];
+    strlcpy(saved_token, token->valuestring, sizeof(saved_token));
+    cJSON_Delete(json);
+    backup_import_summary_t summary = {0};
+    esp_err_t err = backup_restore_commit_import(saved_token, &summary);
+    if (err == ESP_ERR_INVALID_STATE) return send_json_error(req, "409 Conflict", "Validation expired, token does not match, or IR learning/transmission is busy");
+    if (err != ESP_OK) return send_json_error(req, "500 Internal Server Error", "Import failed; original configuration retained or rollback journal kept");
+    return send_backup_summary(req, &summary, true);
 }
 
 static esp_err_t index_get(httpd_req_t *req)
@@ -720,7 +836,7 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 21;
+    cfg.max_uri_handlers = 24;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
@@ -728,6 +844,9 @@ esp_err_t web_server_start(void)
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get},
         {.uri = "/api/diagnostics/resources", .method = HTTP_GET, .handler = resources_get},
         {.uri = "/api/storage/factory-reset", .method = HTTP_POST, .handler = factory_reset_post},
+        {.uri = "/api/backup/export", .method = HTTP_GET, .handler = backup_export_get},
+        {.uri = "/api/backup/import/validate", .method = HTTP_POST, .handler = backup_validate_post},
+        {.uri = "/api/backup/import/commit", .method = HTTP_POST, .handler = backup_commit_post},
         {.uri = "/api/provision", .method = HTTP_POST, .handler = provision_post},
         {.uri = "/api/wifi/reconfigure", .method = HTTP_POST, .handler = wifi_reconfigure_post},
         {.uri = "/api/time/ntp", .method = HTTP_POST, .handler = time_ntp_post},

@@ -29,6 +29,7 @@
 - STA 地址由 DHCP 获取；联网后发布可配置的 `http://<设备名>.local` mDNS 地址，默认 `http://lightgw.local`。页面同时显示 IPv4、STA MAC 和 RSSI，mDNS 不可用时可继续使用当前 IPv4。
 - 管理员可从 Web 明确确认后进入安全重新配网：仅清除 Wi-Fi 凭据并重启到随机 WPA2 临时热点，保留原管理认证；配网完成即关闭热点。
 - 管理密码使用随机盐 + PBKDF2-HMAC-SHA256（120,000 次）保存；控制页面及 API 使用 HTTP Basic 访问控制。
+- 管理页支持版本化 JSON 配置备份/恢复：覆盖 56 条定时和两组 LG OFF 码，导入采用 SHA-256 校验、两阶段确认及 `runtime_nvs` 掉电回滚日志；不会导出密码、RainMaker 凭据、Zigbee 密钥/配对/端点映射。
 - Coordinator 建网、180 秒允许入网、设备 announce、Active Endpoint/Simple Descriptor/model 发现。
 - Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
 - Web、调度器和后续云端入口统一经过 Device Control Service；每个命令拥有 ID，并区分 `PENDING`、`SENT`、`CONFIRMED`、`FAILED` 与实际状态 `UNKNOWN`。
@@ -49,6 +50,8 @@ main/
   main.c                 初始化顺序
   stage_config.h         单源码 Stage 1～5 功能边界
   diagnostics.c          Heap、任务栈、关键内存事件、复位和最近错误诊断
+  backup_restore.c       JSON 导入导出、范围检查、事务日志与启动回滚
+  backup_integrity.c     SHA-256 完整性校验
   settings.c             NVS、PBKDF2 管理密码、定时配置
   wifi_manager.c         首次/重新配网、DHCP、mDNS、STA 重连
   rtc_manager.c          DS3231 I2C、UTC 读写和 OSF 检查
@@ -118,6 +121,8 @@ Stage 1～5 的 `idf.py size` / `size-components` 结果、运行时内存测试
 Flash/NVS 写入点、分区用途、非破坏性恢复策略和迁移风险见 [STORAGE_AUDIT.md](STORAGE_AUDIT.md)；本轮编译、QEMU C 测试、接口检查及未验证项见 [QUALITY_TEST_REPORT.md](QUALITY_TEST_REPORT.md)。开发修改后应运行 `check-all.bat`；它会执行源码存储策略检查、Web/变体接口检查、时间模型、JavaScript 解析、C6 测试固件构建、Stage 1～5 以及四种固件变体的 build/size/size-components。Node.js 不在 PATH 时通过 `NODE_EXE` 指定完整路径。
 
 模块化构建见 [FIRMWARE_VARIANTS.md](FIRMWARE_VARIANTS.md)，安全移除与回退见 [ROLLBACK.md](ROLLBACK.md)，Core 优先的 Phase A～E 路线见 [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)。BH1750、SHT31 和 RainMaker 当前仍是实验边界，未实现的采样/云传输不会被标记为功能通过。
+
+配置备份格式、敏感数据排除项、事务回滚和更换开发板后的重新配对流程见 [BACKUP_RESTORE.md](BACKUP_RESTORE.md)。
 
 ## USB 烧录与监控
 
@@ -199,6 +204,7 @@ idf.py -p COM7 erase-flash flash monitor
 
 - 随机配置热点密码只通过 USB 串口显示；管理密码只保存 PBKDF2 派生值。
 - 当前页面是 HTTP Basic **访问控制**，不是 TLS。它能阻止不知道凭据的普通局域网用户操作，但同网段主动嗅探者仍可能获得凭据。生产网络应使用受信 VLAN/访客隔离，或在前端增加 HTTPS/反向代理（这会违反“无外部服务器”的硬件限制）。
+- 配置导出/导入只允许在受信局域网、隔离 VLAN 或其他安全通道使用；SHA-256 能检测文件损坏但不是防恶意修改的数字签名。
 - 默认开发构建的 NVS 没有静态加密，Wi-Fi 密码会由 ESP-IDF Wi-Fi/NVS 组件保存在 flash。若“安全保存”包含对拆机读取 flash 的防护，量产前必须启用 ESP32-C6 Flash Encryption，并按 Espressif 的量产流程保护/烧录 eFuse 密钥。该过程可能不可逆，本工程不会在普通 `flash` 命令中擅自烧 eFuse。
 - 不要把管理密码、Wi-Fi 密码或量产密钥提交到源码、`sdkconfig.defaults` 或日志。
 

@@ -43,7 +43,7 @@
 | HW-408 | 5 | 1W 模块供电压降及 ESP32 复位 | NOT TESTED | — | 不假设板载5V可提供350mA |
 | HW-409 | 5 | 红外功能72小时稳定性 | NOT TESTED | — | 等待硬件 |
 | HW-410 | 5 | 空调1/空调2/共享组各最多8条独立定时 | NOT TESTED | — | 只用已确认 OFF 码，状态不声称已关闭 |
-| HW-411 | 4/5 | Phase A/存储 C 测试固件 15 项在目标板执行 | NOT TESTED | — | C6 测试镜像已 BUILD PASS；QEMU 15 项 SIMULATED PASS（含 NO_MEM 注入），尚未烧录 C6 |
+| HW-411 | 4/5 | Phase A/存储/备份完整性 C 测试固件 16 项在目标板执行 | NOT TESTED | — | C6 测试镜像已 BUILD PASS；QEMU 16 项 SIMULATED PASS（含 NO_MEM 与备份篡改检测），尚未烧录 C6 |
 | HW-412 | 4 | 多 Zigbee 设备/端点状态隔离与短地址复用 | NOT TESTED | — | 旧 OFF 不得串设备或确认新命令 |
 | HW-413 | 4 | 缓存过期、主动回读超时及恢复后新反馈 | NOT TESTED | — | 页面应为 UNKNOWN/FAILED，收到新反馈后再确认 |
 | HW-414 | 5 | IR 入队、RMT 完成、失败和结果超时状态链 | NOT TESTED | — | SENT 仍不代表空调已关闭 |
@@ -65,5 +65,8 @@
 | HW-430 | 5 | FULL→CORE 保留 Wi-Fi/Zigbee/IR/RTC/56 条任务 | NOT TESTED | — | 先按 ROLLBACK.md 完整备份 |
 | HW-431 | 5 | 移除 BH1750/SHT31 后 DS3231 共享 I²C 正常 | NOT TESTED | — | 记录总线和 OSF 日志 |
 | HW-432 | 5 | 8 MiB 备份、变体回退及恢复演练 | NOT TESTED | — | 禁止 erase-flash，校验所有 SHA-256 |
+| HW-433 | 1～5 | 管理员认证后的配置导出、上传限流、48 KiB 限制与两阶段确认 | NOT TESTED | — | 浏览器和目标板 Web 实测待执行；仅在可信局域网使用 |
+| HW-434 | 1～5 | 配置导入写入中断电后的事务回滚 | NOT TESTED | — | 主配置、56 条任务和两组 IR 码都必须恢复到导入前状态 |
+| HW-435 | 3～5 | 新开发板导入备份后重新配对、重新发现端点并验证两组 LG OFF 码 | NOT TESTED | — | 禁止把旧 Zigbee 映射或配对信息当作有效网络数据恢复 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。

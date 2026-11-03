@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "device_state.h"
+#include "backup_integrity.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
@@ -322,6 +323,19 @@ static void test_scheduler_high_frequency_identical_updates(void)
     CHECK(mock_nvs.writes == 1 && store_a.skipped == 999);
 }
 
+static void test_backup_sha256_and_tamper_detection(void)
+{
+    static const uint8_t data[] = {'a', 'b', 'c'};
+    static const char expected[] = "ba7816bf8f01cfea414140de5dae2223"
+                                   "b00361a396177a9cb410ff61f20015ad";
+    char digest[BACKUP_SHA256_HEX_LENGTH + 1];
+    CHECK(backup_integrity_sha256(data, sizeof(data), digest) == ESP_OK);
+    CHECK(strcmp(digest, expected) == 0);
+    CHECK(backup_integrity_sha256_matches(data, sizeof(data), expected));
+    CHECK(!backup_integrity_sha256_matches((const uint8_t *)"abd", 3, expected));
+    CHECK(!backup_integrity_sha256_matches(data, sizeof(data), "bad"));
+}
+
 void app_main(void)
 {
     RUN(test_multi_device_isolation);
@@ -339,6 +353,7 @@ void app_main(void)
     RUN(test_scheduler_corrupt_record_rejected);
     RUN(test_scheduler_all_56_entries_restart);
     RUN(test_scheduler_high_frequency_identical_updates);
+    RUN(test_backup_sha256_and_tamper_detection);
     printf("PHASE_A_C_TEST SUMMARY PASS: %u tests\n", s_passed);
     for (;;) vTaskDelay(portMAX_DELAY);
 }

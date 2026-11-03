@@ -7,7 +7,7 @@
 - ZBOSS `esp-zboss-lib 1.6.4`
 - Espressif mDNS `1.14.1`
 - 目标：`esp32c6`，Flash：8 MB
-- 当前源码固件版本：`0.9.0-stageN`；原 Stage 1～5 已发布镜像保持不变
+- 当前源码固件版本：`0.11.0-stageN` / `0.11.0-{core,core_sensor,core_cloud,full}`；原 Stage 1～5 已发布镜像保持不变
 
 五个 Stage 使用同一套源码。`LIGHTGW_STAGE` 是 CMake cache 变量，每个 Stage 使用独立的 `build-stageN` 目录和该目录内独立生成的 `sdkconfig`。Stage 5 叠加 `sdkconfig.stage5` 并使用 `partitions_stage5.csv`；Stage 1～4 继续使用原 `partitions.csv`。
 
@@ -149,3 +149,21 @@ ESP32-C6 C 测试镜像同时真实构建通过；最终大小和 SHA-256 见 [Q
 | FULL | PASS (BUILD ONLY) | 1,495,552 B | 1,355,696 B | 215,918 B | `36e9f1c50570dafe23e23ae40d28262ea5addb7fc8ae3239ce257c7e616b2e35` |
 
 构建结果只验证模块边界和链接；Sensor 仅完成非阻塞地址探测，RainMaker 仅完成统一控制服务适配边界，均未宣称实验功能或硬件通过。
+
+## 2026-11-04 配置备份与恢复回归（0.11.0）
+
+`check-all.bat` 对 Stage 1～5 和四种命名变体实际执行 `build`、`size`、`size-components`，并完成存储/Web/变体/备份契约、调度模型、JavaScript 解析和 C6 测试镜像构建，最终输出 `CHECK_ALL PASS`。本轮没有覆盖 `firmware/` 中任何既有发布镜像。
+
+| 构建 | 结果 | 应用 `.bin` | Flash | 静态 DIRAM | SHA-256 |
+|---|---|---:|---:|---:|---|
+| Stage 1 | PASS (BUILD ONLY) | 1,092,992 B | 965,688 B | 160,400 B | `974c8cddb877139c99a6ef899b804db5efbbaf0084de6c34c0c9bd29684753dc` |
+| Stage 2 | PASS (BUILD ONLY) | 1,454,480 B | 1,318,934 B | 192,438 B | `6ed9f041591dfe75a9af23ae87adce4f7223ecd47158bba6209fb369d1d701d5` |
+| Stage 3 | PASS (BUILD ONLY) | 1,457,952 B | 1,322,400 B | 192,438 B | `772ca2e35593c89d29c04c0b720d6fc339eac28dc20d29aaf23b25715e1be4a4` |
+| Stage 4 | PASS (BUILD ONLY) | 1,473,920 B | 1,338,374 B | 206,790 B | `0d1bbdd3d70c7a915ffb078ccebeba4c3f03116b579ce3a150f1e83a21f652fd` |
+| Stage 5 | PASS (BUILD ONLY) | 1,511,664 B | 1,371,812 B | 215,942 B | `b6212406cf5549ce47f69081915aeeacb967b88c444a2739a6c0351279d320b7` |
+| CORE | PASS (BUILD ONLY) | 1,511,648 B | 1,371,796 B | 215,942 B | `c3e37f5e28247e4a069807806c98f72cfe64ad90de2410f3d2f1891a283fa155` |
+| CORE_SENSOR | PASS (BUILD ONLY) | 1,512,512 B | 1,372,664 B | 215,942 B | `ac6f4f21d05035635341a27cf08d8ff640f2d4af5164035651394e25dc0fb485` |
+| CORE_CLOUD | PASS (BUILD ONLY) | 1,512,176 B | 1,372,320 B | 215,942 B | `231dd4a8ed67b329b24fec1d2f9fb1d6d5593bedeb25833860d73e61b4adfb28` |
+| FULL | PASS (BUILD ONLY) | 1,512,896 B | 1,373,048 B | 215,942 B | `496a4c31e30e8937c74188856e98085b64b74f291d079c66aa60ee45f7d4d21c` |
+
+ESP32-C6 C 测试镜像为 126,992 B，SHA-256 `e50367269418bd87140b57a407e1ada78e0f43ec8a51f8ba178d4bb4d1d5d451`。同一生产 C 测试源在 ESP32-C3 QEMU 中实际运行 16/16 PASS，包括新增 SHA-256 已知向量和篡改拒绝；这是软件模拟结果，不是 ESP32-C6 硬件通过。

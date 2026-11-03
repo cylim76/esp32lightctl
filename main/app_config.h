@@ -46,6 +46,10 @@
 #define APP_SENSOR_STORAGE_PARTITION   "sensor_nvs"
 #define APP_CLOUD_STORAGE_PARTITION    "cloud_nvs"
 #define APP_IR_TASK_HISTORY             16
+#define APP_BACKUP_UPLOAD_MIN_INTERVAL_MS 10000
+
+/* Authenticated local-only backup upload limits. */
+#define APP_BACKUP_UPLOAD_MIN_INTERVAL_MS 10000
 
 #define AQARA_MODEL_ID                "lumi.switch.l3acn3"
 #define AQARA_CLUSTER_LUMI            0xFCC0

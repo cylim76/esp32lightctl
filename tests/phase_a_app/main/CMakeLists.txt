@@ -4,6 +4,7 @@ idf_component_register(
         "../../../main/zigbee_state_cache.c"
         "../../../main/device_state.c"
         "../../../main/scheduler_persistence.c"
+        "../../../main/backup_integrity.c"
     INCLUDE_DIRS "../../../main"
-    REQUIRES nvs_flash
+    REQUIRES mbedtls nvs_flash
 )

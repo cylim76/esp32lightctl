@@ -3,6 +3,7 @@
 #include "esp_system.h"
 #include "diagnostics.h"
 #include "storage_manager.h"
+#include "backup_restore.h"
 #include "stage_config.h"
 #if LIGHTGW_HAS_CONTROL
 #include "device_control.h"
@@ -36,6 +37,10 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Storage degraded: %s. No data erased; automatic scheduling may be disabled.",
                  esp_err_to_name(err));
+    }
+    err = backup_restore_recover_pending();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Pending import recovery failed: %s; data was not erased", esp_err_to_name(err));
     }
     ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(wifi_manager_start());

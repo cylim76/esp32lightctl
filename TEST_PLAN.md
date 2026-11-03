@@ -80,7 +80,7 @@
 
 ## Phase A 统一控制专项
 
-- 烧录 `tests/phase_a_app/build-quality-c6/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY PASS: 15 tests` 的完整串口日志；15 项全部 PASS 才能把 C6 目标板测试状态从 `NOT TESTED` 改为 PASS。QEMU PASS 只能记为 `SIMULATED PASS`。
+- 烧录 `tests/phase_a_app/build-quality-c6/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY PASS: 16 tests` 的完整串口日志；16 项全部 PASS 才能把 C6 目标板测试状态从 `NOT TESTED` 改为 PASS。QEMU PASS 只能记为 `SIMULATED PASS`。
 - 配对两台 Zigbee 设备（或一台设备重新配对并观察短地址变化），验证相同 endpoint 编号的状态不会串到另一 IEEE 设备。
 - 先获得 OFF，再等待超过缓存有效期或制造回读超时；新 OFF 命令不得立即使用旧 OFF 显示 `CONFIRMED`。
 - 回读超时后恢复设备并产生新报告，只有新报告到达后才能 `CONFIRMED`。
@@ -94,6 +94,25 @@
 3. 真实板分别制造主 NVS 与 `runtime_nvs` 空间不足，确认页面显示分区 stats/错误且串口明确报告；不得出现自动 erase。
 4. 在单项 `exNN` 提交期间切断电源，恢复后只允许有界 OFF 重试，不得无限触发或把旧 OFF 当作本次成功。
 5. 装载旧 `exec_v1`、旧 `log_v1`、v2 `sched_list`，在迁移前、中、后重启。逐项迁移必须可续传，旧数据必须保留；配置迁移失败不得清空用户任务。
+
+## 配置备份与恢复
+
+软件自动检查（`check-all.bat`）：
+
+1. `tests/test_backup_contract.py` 检查三个认证 API、启动前恢复顺序、敏感字段排除、明确 OFF 语义、限流和 Web 安全提示。
+2. `tests/test_backup_restore.py` 执行正常导入、结构错误、版本不兼容、校验失败、超大文件、模拟中途断电、重复导入和新板恢复模型。
+3. `tests/phase_a_app` 编译真实 C SHA-256/篡改检测测试；只有烧录测试固件并看到 PASS 串口日志后，才能把执行状态从 NOT TESTED 改为 PASS。
+
+硬件验证步骤（当前全部 **NOT TESTED**）：
+
+1. 在旧板创建每个目标各 8 条（共 56 条）任务并学习两组有效 LG OFF 码，导出 JSON。
+2. 确认文件中不存在 Wi-Fi/管理员明文、RainMaker 凭据、Zigbee network key、配对信息和端点映射。
+3. 在新板烧录 CORE，使用新的 Wi-Fi/管理员首次配置后导入；确认 56 条任务和两个 IR 码恢复，Zigbee 页面仍要求重新配对。
+4. 对格式错误、`format_version=99`、被修改但未更新摘要、超过 48 KiB、无管理员认证和 10 秒内重复上传分别验证明确错误，且原配置完全不变。
+5. 在写入主 NVS 前、写入主 NVS 后、写入 `ir_data` 后、清除日志前四个窗口分别断电；每次重启应显示 interrupted import rollback，且恢复旧任务和旧 IR 码。
+6. 注入 NVS 空间不足/提交失败；确认立即回滚或保留启动恢复日志，绝不擦除整个分区。
+7. 依次测试 CORE_SENSOR、CORE_CLOUD、FULL 互相导入；未编入的扩展设置必须跳过并报告，核心设置不受影响。
+8. 测量导出、解析 48 KiB 文件、验证候选驻留和提交时的 Free Heap/Minimum Free Heap/Largest Free Block；未测量前不得声称内存余量充足。
 6. 配置 56 条任务并使其同分钟到期，验证各目标独立、最大重试有界、日志固定为 RAM 最近 8 条，运行 7 天后 NVS 用量不因普通日志线性增长。
 7. 注入设备表 CRC/长度错误，确认自动覆盖被阻止；只有管理员明确执行恢复出厂设置并输入 `ERASE_ALL_USER_DATA` 时才允许擦除。
 8. 对内存分配失败、Wi-Fi/Zigbee/RainMaker 掉线、IR 失败、RTC OSF、时间大幅跳变、系统复位分别保存页面、串口、coredump 和固件 SHA-256。尚未实现的 RainMaker 项保持 `NOT AVAILABLE / NOT TESTED`。

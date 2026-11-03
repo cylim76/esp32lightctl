@@ -29,7 +29,7 @@ endif()
 if(NOT LIGHTGW_VARIANT STREQUAL "STAGE")
     string(TOLOWER "${LIGHTGW_VARIANT}" _lightgw_variant_lower)
     list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/sdkconfig.variant.${_lightgw_variant_lower}")
-    set(PROJECT_VER "0.10.0-${_lightgw_variant_lower}")
+    set(PROJECT_VER "0.11.0-${_lightgw_variant_lower}")
     if(LIGHTGW_VARIANT STREQUAL "CORE_SENSOR" OR LIGHTGW_VARIANT STREQUAL "FULL")
         list(APPEND EXTRA_COMPONENT_DIRS
             "${CMAKE_SOURCE_DIR}/extensions/bh1750"
@@ -40,7 +40,7 @@ if(NOT LIGHTGW_VARIANT STREQUAL "STAGE")
         list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/extensions/rainmaker")
     endif()
 else()
-    set(PROJECT_VER "0.10.0-stage${LIGHTGW_STAGE}")
+    set(PROJECT_VER "0.11.0-stage${LIGHTGW_STAGE}")
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

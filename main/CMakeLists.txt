@@ -7,6 +7,8 @@ set(app_sources
     "web_server.c"
     "diagnostics.c"
     "storage_manager.c"
+    "backup_integrity.c"
+    "backup_restore.c"
 )
 set(app_requires
     esp_coex esp_event esp_http_server esp_netif esp_system esp_timer esp_wifi espcoredump

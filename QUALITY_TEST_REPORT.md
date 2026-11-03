@@ -1,7 +1,7 @@
 # 代码质量与自动测试报告
 
-日期：2026-11-03  
-版本：`0.10.0-stageN` / `0.10.0-{core,core_sensor,core_cloud,full}`
+日期：2026-11-04
+版本：`0.11.0-stageN` / `0.11.0-{core,core_sensor,core_cloud,full}`
 工具链：ESP-IDF 5.5.1、RISC-V GCC 14.2.0、esp-zigbee-lib 1.6.8、esp-zboss-lib 1.6.4。
 
 ## 交付结论
@@ -59,7 +59,7 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 14. 1000 次相同更新只发生 1 次后端写入。
 15. 后端返回 `ESP_ERR_NO_MEM` 时错误向上传递，重启仍读取最后完整状态。
 
-首轮 QEMU 确实暴露了结构体填充比较和测试栈问题；修复并加入内存不足注入后，从干净启动再次运行，输出 `PHASE_A_C_TEST SUMMARY PASS: 15 tests`，随后保持运行，无 panic 后才人工终止 QEMU。
+首轮 QEMU 确实暴露了结构体填充比较和测试栈问题；修复并加入内存不足注入后，从干净启动再次运行；本轮再加入备份 SHA-256/篡改检测，最终输出 `PHASE_A_C_TEST SUMMARY PASS: 16 tests`，随后保持运行，无 panic 后才人工终止 QEMU。
 
 ## 固件回归与资源
 
@@ -113,3 +113,37 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - 管理页仍使用局域网 HTTP Basic，量产环境的 TLS、Flash Encryption/NVS Encryption 需另行设计。
 
 不存在自动破坏性迁移；存在且明确记录的破坏性操作只有用户确认恢复出厂设置、手工 `erase-flash` 和未来分区重排。
+
+## 0.11.0 配置备份与恢复增量报告
+
+### 确定问题及修复
+
+| 问题 | 风险 | 修改 |
+|---|---|---|
+| 缺少可移机的配置导出 | 开发板损坏后需人工重建大量定时和 IR 码 | 新增版本化 JSON 导出、两组完整 IR OFF 码和 56 条定时 |
+| 跨主 NVS 与 `ir_data` 无原子事务 | 导入中断电可能形成新旧混合配置 | 提交前在 `runtime_nvs/backup_tx` 持久化旧快照，启动时先于 settings/IR 加载回滚 |
+| 直接上传即可覆盖配置 | 格式/范围错误可能写到一半 | 分为 validate/token/明确 commit；验证阶段零写入，token 2 分钟失效 |
+| 备份可能误含身份/密钥 | 文件泄露扩大影响或错误恢复 Zigbee | 明确排除 Wi-Fi/管理员密码、RainMaker 凭据、Zigbee 密钥/配对/映射，并在新板报告重新配对 |
+| 大文件/频繁上传可能消耗堆 | 512 KiB SRAM 下造成碎片或拒绝服务 | 48 KiB 上限、10 秒限流、按需堆分配、候选 2 分钟自动释放、关键内存事件 |
+| 导入 IR 时与学习/发射并行 | 状态缓存陈旧或读写竞争 | IR busy 时拒绝提交，成功或回滚后刷新 IR metadata |
+
+### 实际自动检查
+
+- `tests/test_backup_contract.py`：PASS。
+- `tests/test_backup_restore.py`：PASS；覆盖正常导入、严格拒绝尾随 JSON、格式/版本/校验/超限失败、模拟掉电回滚、重复导入与新板恢复。
+- `tests/test_backup_restore.py`：正常导入、结构错误、版本不兼容、校验失败、超大文件、模拟断电回滚、重复导入、新板恢复全部 PASS。
+- Web 内联 JavaScript：解析 PASS。
+- C SHA-256 已知向量、篡改、非法摘要测试：ESP32-C3 QEMU 实际执行 PASS；完整 C 测试 `16/16 PASS`。
+- ESP32-C6 C 测试镜像：BUILD PASS，126,992 B，SHA-256 `e50367269418bd87140b57a407e1ada78e0f43ec8a51f8ba178d4bb4d1d5d451`。
+- Stage 1～5、CORE、CORE_SENSOR、CORE_CLOUD、FULL 的 build/size/size-components：全部 PASS；具体大小与 SHA-256 见 `BUILD.md` 和 `MEMORY_RESOURCE_REPORT.md`。
+- `git diff --check`：PASS（只有 Windows CRLF 转换提示）。
+
+### 未自动或未实物验证
+
+- 浏览器与真实 ESP32-C6 间的下载/上传和 HTTP Basic 行为：NOT TESTED。
+- 主 NVS/IR NVS 每个写入窗口的真实拔电恢复：NOT TESTED。
+- 最大 48 KiB JSON 在 C6 上的实际堆峰值和碎片恢复：NOT TESTED。
+- 导入两组真实 LG 码后的空调响应、新板 Aqara 重新配对/端点确认：NOT TESTED。
+- 扩展模块当前没有用户可调参数；备份只携带独立 schema 和空设置对象。未来增加参数时必须同时增加版本迁移和 round-trip 测试。
+
+本功能没有破坏性数据迁移，不会擦除任何整个分区。SHA-256 是完整性检查而非数字签名；HTTP Basic 无 TLS，只能在可信本地网络或安全通道使用。

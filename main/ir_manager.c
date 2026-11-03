@@ -405,3 +405,19 @@ void ir_manager_get_status(ir_status_t *status)
     *status = s_status;
     portEXIT_CRITICAL(&s_lock);
 }
+
+bool ir_manager_storage_busy(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool busy = s_status.learning || s_status.transmitting;
+    portEXIT_CRITICAL(&s_lock);
+    return busy || (s_tx_queue && uxQueueMessagesWaiting(s_tx_queue));
+}
+
+esp_err_t ir_manager_refresh_storage(void)
+{
+    if (!s_status.initialized) return ESP_ERR_INVALID_STATE;
+    if (ir_manager_storage_busy()) return ESP_ERR_INVALID_STATE;
+    for (uint8_t slot = 0; slot < IR_CODE_SLOT_COUNT; ++slot) refresh_code_metadata(slot);
+    return ESP_OK;
+}

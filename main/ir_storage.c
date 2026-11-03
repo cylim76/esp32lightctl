@@ -112,6 +112,24 @@ esp_err_t ir_storage_save_code(uint8_t slot, const ir_code_t *source)
     return err;
 }
 
+esp_err_t ir_storage_delete_code(uint8_t slot)
+{
+    if (slot >= IR_CODE_SLOT_COUNT) return ESP_ERR_INVALID_ARG;
+    if (!s_exists[slot]) {
+        storage_manager_record_write(APP_IR_STORAGE_PARTITION, slot_key(slot), ESP_OK, false);
+        return ESP_OK;
+    }
+    nvs_handle_t nvs;
+    ESP_RETURN_ON_ERROR(open_ir_rw(&nvs, "code_delete_open"), TAG, "open IR NVS");
+    esp_err_t err = nvs_erase_key(nvs, slot_key(slot));
+    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    storage_manager_record_write(APP_IR_STORAGE_PARTITION, slot_key(slot), err, true);
+    if (err == ESP_OK) s_exists[slot] = false;
+    return err;
+}
+
 bool ir_storage_code_exists(uint8_t slot)
 {
     return slot < IR_CODE_SLOT_COUNT && s_exists[slot];
