@@ -7,7 +7,7 @@
 - ZBOSS `esp-zboss-lib 1.6.4`
 - Espressif mDNS `1.14.1`
 - 目标：`esp32c6`，Flash：8 MB
-- 固件版本：`0.3.0-stage1` ～ `0.3.0-stage4`
+- 固件版本：`0.4.0-stage1` ～ `0.4.0-stage4`
 
 四个 Stage 使用同一套源码。`LIGHTGW_STAGE` 是 CMake cache 变量，每个 Stage 使用独立的 `build-stageN` 目录和该目录内独立生成的 `sdkconfig`。
 
@@ -47,14 +47,14 @@ Stage 3 不会启用三路控制。Stage 4 也要求先在页面明确保存现�
 
 ## 2026-11-03 真实构建结果
 
-以下状态仅代表 `idf.py build` 成功，不代表硬件测试通过。最终哈希记录在提交时生成。
+下表为 `0.4.0` 多时段调度版本的真实构建记录。任何构建结果都不代表硬件测试通过。
 
 | Stage | 结果 | 应用大小 | 应用 SHA-256 |
 |---|---|---:|---|
-| 1 | PASS (BUILD ONLY) | 1,009,776 B (`0xf6870`) | `b64e2a44075b649e4196629f4b3245933b62525404c92210b0ffbaa29bafa424` |
-| 2 | PASS (BUILD ONLY) | 1,368,400 B (`0x14e150`) | `a0a213ad5a87842625b9b4b0883545bbfce11324b070f3608f0031d39cc1bf60` |
-| 3 | PASS (BUILD ONLY) | 1,371,136 B (`0x14ec00`) | `710c11c2bf8c1901f0695396df80c2016b64d91766a30477cd29e9ea47046b56` |
-| 4 | PASS (BUILD ONLY) | 1,380,096 B (`0x150f00`) | `398bcf8c1eba67d455d7cd96dfee1b8ef1b538322e7de747f2610dca21295814` |
+| 1 | PASS (BUILD ONLY) | 1,011,488 B (`0xf6f20`) | `aabd1c393d95422886a234faebe81105c8c6e35bf1c8ad934a9bb9227728fd27` |
+| 2 | PASS (BUILD ONLY) | 1,370,080 B (`0x14e7e0`) | `57b706ca290158e81fc8ade896102ac71138b4198fe67f5206070aa7a464f81c` |
+| 3 | PASS (BUILD ONLY) | 1,372,832 B (`0x14f2a0`) | `1dd589c476dde66ae8b60102b25088e0b4ef3adebec54f16d40145b0da65a622` |
+| 4 | PASS (BUILD ONLY) | 1,382,544 B (`0x151890`) | `506c3e3e725eb5d6297612131953d8b7557912ab4f7fe0fa23a88136ac17c672` |
 
 所有 Stage 使用相同分区表。烧录地址为：bootloader `0x0`、partition table `0x8000`、factory app `0x10000`。
 

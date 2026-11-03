@@ -5,6 +5,15 @@
 #include <stdint.h>
 #include "esp_err.h"
 
+#define APP_MAX_SCHEDULES 8
+
+typedef struct {
+    uint8_t enabled;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t days;
+} app_schedule_entry_t;
+
 typedef struct {
     bool wifi_configured;
     char wifi_ssid[33];
@@ -14,10 +23,8 @@ typedef struct {
     uint8_t auth_salt[16];
     uint8_t auth_hash[32];
     bool auth_configured;
-    bool schedule_enabled;
-    uint8_t schedule_hour;
-    uint8_t schedule_minute;
-    uint8_t schedule_days;
+    uint8_t schedule_count;
+    app_schedule_entry_t schedules[APP_MAX_SCHEDULES];
     char timezone[65];
 } app_settings_t;
 
@@ -28,5 +35,5 @@ esp_err_t settings_clear_wifi(void);
 esp_err_t settings_save_device_name(const char *device_name);
 esp_err_t settings_save_admin(const char *user, const char *password);
 bool settings_verify_admin(const char *user, const char *password);
-esp_err_t settings_save_schedule(bool enabled, uint8_t hour, uint8_t minute,
-                                 uint8_t days, const char *timezone);
+esp_err_t settings_save_schedules(const app_schedule_entry_t *entries, size_t count,
+                                  const char *timezone);

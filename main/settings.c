@@ -69,11 +69,36 @@ esp_err_t settings_init(void)
         len = sizeof(s_cfg.auth_hash);
         s_cfg.auth_configured = nvs_get_blob(nvs, "auth_hash", s_cfg.auth_hash, &len) == ESP_OK && len == sizeof(s_cfg.auth_hash);
     }
-    uint8_t v = 0;
-    if (nvs_get_u8(nvs, "sched_en", &v) == ESP_OK) s_cfg.schedule_enabled = v != 0;
-    nvs_get_u8(nvs, "sched_hour", &s_cfg.schedule_hour);
-    nvs_get_u8(nvs, "sched_min", &s_cfg.schedule_minute);
-    nvs_get_u8(nvs, "sched_days", &s_cfg.schedule_days);
+    uint8_t schedule_version = 0;
+    bool has_v2_schedules = nvs_get_u8(nvs, "sched_ver", &schedule_version) == ESP_OK && schedule_version == 2;
+    if (has_v2_schedules) {
+        size_t schedules_len = sizeof(s_cfg.schedules);
+        if (nvs_get_blob(nvs, "sched_list", s_cfg.schedules, &schedules_len) == ESP_OK &&
+            schedules_len % sizeof(app_schedule_entry_t) == 0) {
+            s_cfg.schedule_count = schedules_len / sizeof(app_schedule_entry_t);
+            if (s_cfg.schedule_count > APP_MAX_SCHEDULES) s_cfg.schedule_count = APP_MAX_SCHEDULES;
+            for (size_t i = 0; i < s_cfg.schedule_count; ++i) {
+                app_schedule_entry_t *entry = &s_cfg.schedules[i];
+                if (entry->enabled > 1 || entry->hour > 23 || entry->minute > 59 || (entry->days & 0x80U)) {
+                    ESP_LOGW(TAG, "Ignoring invalid saved schedule list");
+                    memset(s_cfg.schedules, 0, sizeof(s_cfg.schedules));
+                    s_cfg.schedule_count = 0;
+                    break;
+                }
+            }
+        }
+    } else {
+        /* One-time compatibility path for firmware versions that stored one schedule. */
+        uint8_t enabled = 0, hour = 0, minute = 0, days = 0;
+        bool legacy_present = nvs_get_u8(nvs, "sched_en", &enabled) == ESP_OK;
+        nvs_get_u8(nvs, "sched_hour", &hour);
+        nvs_get_u8(nvs, "sched_min", &minute);
+        nvs_get_u8(nvs, "sched_days", &days);
+        if (legacy_present && hour <= 23 && minute <= 59) {
+            s_cfg.schedule_count = 1;
+            s_cfg.schedules[0] = (app_schedule_entry_t){enabled != 0, hour, minute, days};
+        }
+    }
     nvs_close(nvs);
     return ESP_OK;
 }
@@ -160,23 +185,27 @@ bool settings_verify_admin(const char *user, const char *password)
     return constant_time_equal(hash, s_cfg.auth_hash, sizeof(hash));
 }
 
-esp_err_t settings_save_schedule(bool enabled, uint8_t hour, uint8_t minute, uint8_t days, const char *timezone)
+esp_err_t settings_save_schedules(const app_schedule_entry_t *entries, size_t count, const char *timezone)
 {
-    if (hour > 23 || minute > 59 || !timezone || timezone[0] == '\0' || strlen(timezone) > 64) return ESP_ERR_INVALID_ARG;
+    if ((!entries && count != 0) || count > APP_MAX_SCHEDULES || !timezone ||
+        timezone[0] == '\0' || strlen(timezone) > 64) return ESP_ERR_INVALID_ARG;
+    for (size_t i = 0; i < count; ++i) {
+        if (entries[i].enabled > 1 || entries[i].hour > 23 || entries[i].minute > 59 ||
+            (entries[i].days & 0x80U) != 0) return ESP_ERR_INVALID_ARG;
+    }
     nvs_handle_t nvs;
     ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
-    esp_err_t err = nvs_set_u8(nvs, "sched_en", enabled);
-    if (err == ESP_OK) err = nvs_set_u8(nvs, "sched_hour", hour);
-    if (err == ESP_OK) err = nvs_set_u8(nvs, "sched_min", minute);
-    if (err == ESP_OK) err = nvs_set_u8(nvs, "sched_days", days);
+    esp_err_t err = count ? nvs_set_blob(nvs, "sched_list", entries, count * sizeof(*entries)) :
+                            nvs_erase_key(nvs, "sched_list");
+    if (!count && err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    if (err == ESP_OK) err = nvs_set_u8(nvs, "sched_ver", 2);
     if (err == ESP_OK) err = nvs_set_str(nvs, "timezone", timezone);
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
     if (err == ESP_OK) {
-        s_cfg.schedule_enabled = enabled;
-        s_cfg.schedule_hour = hour;
-        s_cfg.schedule_minute = minute;
-        s_cfg.schedule_days = days;
+        memset(s_cfg.schedules, 0, sizeof(s_cfg.schedules));
+        if (count) memcpy(s_cfg.schedules, entries, count * sizeof(*entries));
+        s_cfg.schedule_count = count;
         strlcpy(s_cfg.timezone, timezone, sizeof(s_cfg.timezone));
     }
     return err;

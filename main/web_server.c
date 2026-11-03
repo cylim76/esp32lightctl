@@ -69,7 +69,7 @@ denied:
 
 static cJSON *receive_json(httpd_req_t *req)
 {
-    if (req->content_len <= 0 || req->content_len > 1024) return NULL;
+    if (req->content_len <= 0 || req->content_len > 2048) return NULL;
     char *body = calloc(1, req->content_len + 1);
     if (!body) return NULL;
     int total = 0;
@@ -131,12 +131,17 @@ static esp_err_t status_get(httpd_req_t *req)
 #endif
 
     const app_settings_t *cfg = settings_get();
-    cJSON *sched = cJSON_AddObjectToObject(root, "schedule");
-    cJSON_AddBoolToObject(sched, "enabled", cfg->schedule_enabled);
-    cJSON_AddNumberToObject(sched, "hour", cfg->schedule_hour);
-    cJSON_AddNumberToObject(sched, "minute", cfg->schedule_minute);
-    cJSON_AddNumberToObject(sched, "days", cfg->schedule_days);
-    cJSON_AddStringToObject(sched, "timezone", cfg->timezone);
+    cJSON_AddStringToObject(root, "timezone", cfg->timezone);
+    cJSON_AddNumberToObject(root, "max_schedules", APP_MAX_SCHEDULES);
+    cJSON *schedules = cJSON_AddArrayToObject(root, "schedules");
+    for (size_t i = 0; i < cfg->schedule_count && i < APP_MAX_SCHEDULES; ++i) {
+        cJSON *entry = cJSON_CreateObject();
+        cJSON_AddBoolToObject(entry, "enabled", cfg->schedules[i].enabled != 0);
+        cJSON_AddNumberToObject(entry, "hour", cfg->schedules[i].hour);
+        cJSON_AddNumberToObject(entry, "minute", cfg->schedules[i].minute);
+        cJSON_AddNumberToObject(entry, "days", cfg->schedules[i].days);
+        cJSON_AddItemToArray(schedules, entry);
+    }
 
     cJSON_AddArrayToObject(root, "devices");
 #if LIGHTGW_HAS_ZIGBEE
@@ -291,16 +296,32 @@ static esp_err_t schedule_post(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
     cJSON *j = receive_json(req);
-    cJSON *enabled = j ? cJSON_GetObjectItem(j, "enabled") : NULL;
-    cJSON *hour = j ? cJSON_GetObjectItem(j, "hour") : NULL;
-    cJSON *minute = j ? cJSON_GetObjectItem(j, "minute") : NULL;
-    cJSON *days = j ? cJSON_GetObjectItem(j, "days") : NULL;
     cJSON *tz = j ? cJSON_GetObjectItem(j, "timezone") : NULL;
-    if (!cJSON_IsBool(enabled) || !cJSON_IsNumber(hour) || !cJSON_IsNumber(minute) || !cJSON_IsNumber(days) || !cJSON_IsString(tz)) {
+    cJSON *items = j ? cJSON_GetObjectItem(j, "schedules") : NULL;
+    int count = cJSON_IsArray(items) ? cJSON_GetArraySize(items) : -1;
+    if (!cJSON_IsString(tz) || count < 0 || count > APP_MAX_SCHEDULES) {
         cJSON_Delete(j);
         return send_json_error(req, "400 Bad Request", "Invalid schedule");
     }
-    esp_err_t err = settings_save_schedule(cJSON_IsTrue(enabled), hour->valueint, minute->valueint, days->valueint, tz->valuestring);
+    app_schedule_entry_t entries[APP_MAX_SCHEDULES] = {0};
+    for (int i = 0; i < count; ++i) {
+        cJSON *item = cJSON_GetArrayItem(items, i);
+        cJSON *enabled = cJSON_GetObjectItem(item, "enabled");
+        cJSON *hour = cJSON_GetObjectItem(item, "hour");
+        cJSON *minute = cJSON_GetObjectItem(item, "minute");
+        cJSON *days = cJSON_GetObjectItem(item, "days");
+        if (!cJSON_IsBool(enabled) || !cJSON_IsNumber(hour) || !cJSON_IsNumber(minute) ||
+            !cJSON_IsNumber(days) || hour->valuedouble != hour->valueint ||
+            minute->valuedouble != minute->valueint || days->valuedouble != days->valueint ||
+            hour->valueint < 0 || hour->valueint > 23 || minute->valueint < 0 ||
+            minute->valueint > 59 || days->valueint < 0 || days->valueint > 127) {
+            cJSON_Delete(j);
+            return send_json_error(req, "400 Bad Request", "Each schedule requires enabled/hour/minute/days");
+        }
+        entries[i] = (app_schedule_entry_t){cJSON_IsTrue(enabled), hour->valueint,
+                                             minute->valueint, days->valueint};
+    }
+    esp_err_t err = settings_save_schedules(entries, count, tz->valuestring);
     cJSON_Delete(j);
     return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") : send_json_error(req, "400 Bad Request", esp_err_to_name(err));
 }
