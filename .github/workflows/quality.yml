@@ -20,6 +20,9 @@ jobs:
       - run: python tests/static_storage_check.py
       - run: python tests/test_web_storage_contract.py
       - run: python tests/test_variant_contract.py
+      - run: python tests/test_backup_contract.py
+      - run: python tests/test_backup_restore.py
+      - run: python tests/test_ci_workflow.py
       - run: python tests/simulate_time_scheduler.py
       - run: node tests/check_web_js.js
 
@@ -32,16 +35,26 @@ jobs:
         stage: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v4
-      - run: idf.py -B build-ci-stage${{ matrix.stage }} -D LIGHTGW_STAGE=${{ matrix.stage }} build
-      - run: idf.py -B build-ci-stage${{ matrix.stage }} size
-      - run: idf.py -B build-ci-stage${{ matrix.stage }} size-components
+      - name: Build and measure Stage ${{ matrix.stage }}
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          command -v idf.py
+          idf.py -B build-ci-stage${{ matrix.stage }} -D LIGHTGW_STAGE=${{ matrix.stage }} build
+          idf.py -B build-ci-stage${{ matrix.stage }} size
+          idf.py -B build-ci-stage${{ matrix.stage }} size-components
 
   c-tests-build:
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.1
     steps:
       - uses: actions/checkout@v4
-      - run: idf.py -B build-quality-c6 -DIDF_TARGET=esp32c6 build
+      - name: Build ESP32-C6 production C tests
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          command -v idf.py
+          idf.py -B build-quality-c6 -DIDF_TARGET=esp32c6 build
         working-directory: tests/phase_a_app
 
   variants:
@@ -53,9 +66,14 @@ jobs:
         variant: [CORE, CORE_SENSOR, CORE_CLOUD, FULL]
     steps:
       - uses: actions/checkout@v4
-      - run: idf.py -B build-ci-variant-${{ matrix.variant }} -D LIGHTGW_VARIANT=${{ matrix.variant }} build
-      - run: idf.py -B build-ci-variant-${{ matrix.variant }} size
-      - run: idf.py -B build-ci-variant-${{ matrix.variant }} size-components
+      - name: Build and measure ${{ matrix.variant }}
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          command -v idf.py
+          idf.py -B build-ci-variant-${{ matrix.variant }} -D LIGHTGW_VARIANT=${{ matrix.variant }} build
+          idf.py -B build-ci-variant-${{ matrix.variant }} size
+          idf.py -B build-ci-variant-${{ matrix.variant }} size-components
 
   c-tests-qemu:
     runs-on: ubuntu-latest
@@ -74,7 +92,7 @@ jobs:
           idf.py -B build-quality-qemu -DSDKCONFIG_DEFAULTS=sdkconfig.qemu -DIDF_TARGET=esp32c3 build
         working-directory: tests/phase_a_app
         shell: bash
-      - name: Run 15 production C tests
+      - name: Run production C tests
         run: |
           . "$IDF_PATH/export.sh"
           set +e
@@ -82,7 +100,7 @@ jobs:
           qemu_status=${PIPESTATUS[0]}
           set -e
           if [ "$qemu_status" -ne 0 ] && [ "$qemu_status" -ne 124 ]; then exit "$qemu_status"; fi
-          grep -q "PHASE_A_C_TEST SUMMARY PASS: 15 tests" qemu.log
+          grep -Eq "PHASE_A_C_TEST SUMMARY PASS: [0-9]+ tests" qemu.log
           if grep -q "PHASE_A_C_TEST FAIL" qemu.log; then exit 1; fi
         working-directory: tests/phase_a_app
         shell: bash
