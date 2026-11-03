@@ -69,4 +69,4 @@ idf.py -p COM7 erase-flash
 
 ## 必须保留的日志
 
-从复位第一行开始保存串口输出，至少应包含固件版本/Stage/复位原因、Wi-Fi IP 与断线 reason、Coordinator 建网、Permit Join、设备 announce、`DIAG` 端点/Cluster、控制 TX、状态反馈、Free Heap 和错误信息。编译日志与串口日志应分开归档。
+从复位第一行开始保存串口输出，至少应包含固件版本/Stage/复位原因、DHCP IPv4、mDNS 主机名、Wi-Fi 断线 reason、Coordinator 建网、Permit Join、设备 announce、`DIAG` 端点/Cluster、控制 TX、状态反馈、Free Heap 和错误信息。编译日志与串口日志应分开归档。

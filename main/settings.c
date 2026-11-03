@@ -12,6 +12,18 @@
 static const char *TAG = "settings";
 static app_settings_t s_cfg;
 
+static bool valid_device_name(const char *name)
+{
+    if (!name) return false;
+    size_t len = strlen(name);
+    if (len < 1 || len > 32 || name[0] == '-' || name[len - 1] == '-') return false;
+    for (size_t i = 0; i < len; ++i) {
+        char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+    }
+    return true;
+}
+
 static esp_err_t derive_password(const char *password, const uint8_t *salt, uint8_t *out)
 {
     return mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
@@ -36,6 +48,7 @@ esp_err_t settings_init(void)
 {
     memset(&s_cfg, 0, sizeof(s_cfg));
     strlcpy(s_cfg.admin_user, "admin", sizeof(s_cfg.admin_user));
+    strlcpy(s_cfg.device_name, "lightgw", sizeof(s_cfg.device_name));
     strlcpy(s_cfg.timezone, APP_TIMEZONE_DEFAULT, sizeof(s_cfg.timezone));
 
     nvs_handle_t nvs;
@@ -45,6 +58,8 @@ esp_err_t settings_init(void)
 
     load_str(nvs, "wifi_ssid", s_cfg.wifi_ssid, sizeof(s_cfg.wifi_ssid));
     load_str(nvs, "wifi_pass", s_cfg.wifi_password, sizeof(s_cfg.wifi_password));
+    load_str(nvs, "device_name", s_cfg.device_name, sizeof(s_cfg.device_name));
+    if (!valid_device_name(s_cfg.device_name)) strlcpy(s_cfg.device_name, "lightgw", sizeof(s_cfg.device_name));
     load_str(nvs, "admin_user", s_cfg.admin_user, sizeof(s_cfg.admin_user));
     load_str(nvs, "timezone", s_cfg.timezone, sizeof(s_cfg.timezone));
     s_cfg.wifi_configured = s_cfg.wifi_ssid[0] != '\0';
@@ -61,6 +76,37 @@ esp_err_t settings_init(void)
     nvs_get_u8(nvs, "sched_days", &s_cfg.schedule_days);
     nvs_close(nvs);
     return ESP_OK;
+}
+
+esp_err_t settings_clear_wifi(void)
+{
+    nvs_handle_t nvs;
+    ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
+    esp_err_t err = nvs_erase_key(nvs, "wifi_ssid");
+    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    esp_err_t pass_err = nvs_erase_key(nvs, "wifi_pass");
+    if (pass_err == ESP_ERR_NVS_NOT_FOUND) pass_err = ESP_OK;
+    if (err == ESP_OK) err = pass_err;
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    if (err == ESP_OK) {
+        memset(s_cfg.wifi_ssid, 0, sizeof(s_cfg.wifi_ssid));
+        memset(s_cfg.wifi_password, 0, sizeof(s_cfg.wifi_password));
+        s_cfg.wifi_configured = false;
+    }
+    return err;
+}
+
+esp_err_t settings_save_device_name(const char *device_name)
+{
+    if (!valid_device_name(device_name)) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t nvs;
+    ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
+    esp_err_t err = nvs_set_str(nvs, "device_name", device_name);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    if (err == ESP_OK) strlcpy(s_cfg.device_name, device_name, sizeof(s_cfg.device_name));
+    return err;
 }
 
 const app_settings_t *settings_get(void) { return &s_cfg; }

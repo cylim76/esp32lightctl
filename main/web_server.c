@@ -95,8 +95,9 @@ static esp_err_t status_get(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
     cJSON *root = cJSON_CreateObject();
-    char ip[16];
+    char ip[16], mac[18];
     wifi_manager_get_ip(ip, sizeof(ip));
+    wifi_manager_get_mac(mac, sizeof(mac));
     cJSON_AddTrueToObject(root, "ok");
     cJSON_AddStringToObject(root, "firmware", LIGHTGW_VERSION);
     cJSON_AddNumberToObject(root, "stage", LIGHTGW_STAGE);
@@ -104,7 +105,11 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddStringToObject(root, "provision_ssid", wifi_manager_provision_ssid());
     cJSON_AddBoolToObject(root, "wifi_connected", wifi_manager_is_connected());
     cJSON_AddStringToObject(root, "ip", ip);
+    cJSON_AddStringToObject(root, "mac", mac);
     cJSON_AddNumberToObject(root, "wifi_rssi", wifi_manager_get_rssi());
+    cJSON_AddStringToObject(root, "device_name", settings_get()->device_name);
+    cJSON_AddStringToObject(root, "mdns_hostname", wifi_manager_mdns_hostname());
+    cJSON_AddBoolToObject(root, "mdns_active", wifi_manager_mdns_active());
     cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000);
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(root, "minimum_free_heap", esp_get_minimum_free_heap_size());
@@ -182,20 +187,41 @@ static void restart_task(void *arg)
 
 static esp_err_t provision_post(httpd_req_t *req)
 {
+    if (!authorized(req)) return ESP_OK;
     if (!wifi_manager_is_provisioning()) return send_json_error(req, "403 Forbidden", "Provisioning is closed");
     cJSON *j = receive_json(req);
     cJSON *ssid = j ? cJSON_GetObjectItem(j, "ssid") : NULL;
     cJSON *pass = j ? cJSON_GetObjectItem(j, "password") : NULL;
     cJSON *user = j ? cJSON_GetObjectItem(j, "admin_user") : NULL;
     cJSON *admin = j ? cJSON_GetObjectItem(j, "admin_password") : NULL;
-    if (!cJSON_IsString(ssid) || !cJSON_IsString(pass) || !cJSON_IsString(user) || !cJSON_IsString(admin)) {
+    cJSON *device_name = j ? cJSON_GetObjectItem(j, "device_name") : NULL;
+    if (!cJSON_IsString(ssid) || !cJSON_IsString(pass) || !cJSON_IsString(user) ||
+        !cJSON_IsString(admin) || !cJSON_IsString(device_name)) {
         cJSON_Delete(j);
         return send_json_error(req, "400 Bad Request", "Missing fields");
     }
-    esp_err_t err = settings_save_admin(user->valuestring, admin->valuestring);
+    esp_err_t err = settings_save_device_name(device_name->valuestring);
+    if (err == ESP_OK) err = settings_save_admin(user->valuestring, admin->valuestring);
     if (err == ESP_OK) err = settings_save_wifi(ssid->valuestring, pass->valuestring);
     cJSON_Delete(j);
-    if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "Invalid settings (admin password must be at least 12 characters)");
+    if (err != ESP_OK) return send_json_error(req, "400 Bad Request", "Invalid settings (device name: lowercase letters/digits/hyphens; admin password: at least 12 characters)");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true}");
+    xTaskCreate(restart_task, "restart", 2048, NULL, 3, NULL);
+    return ESP_OK;
+}
+
+static esp_err_t wifi_reconfigure_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    cJSON *confirm = j ? cJSON_GetObjectItem(j, "confirm") : NULL;
+    bool confirmed = cJSON_IsString(confirm) && strcmp(confirm->valuestring, "RECONFIGURE") == 0;
+    cJSON_Delete(j);
+    if (!confirmed) return send_json_error(req, "400 Bad Request", "Explicit confirmation is required");
+    esp_err_t err = settings_clear_wifi();
+    if (err != ESP_OK) return send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+    ESP_LOGW(TAG, "Authenticated Wi-Fi reconfiguration requested; restarting into temporary provisioning AP");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true}");
     xTaskCreate(restart_task, "restart", 2048, NULL, 3, NULL);
@@ -290,6 +316,7 @@ esp_err_t web_server_start(void)
         {.uri = "/", .method = HTTP_GET, .handler = index_get},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get},
         {.uri = "/api/provision", .method = HTTP_POST, .handler = provision_post},
+        {.uri = "/api/wifi/reconfigure", .method = HTTP_POST, .handler = wifi_reconfigure_post},
 #if LIGHTGW_HAS_ZIGBEE
         {.uri = "/api/pair", .method = HTTP_POST, .handler = pair_post},
 #endif

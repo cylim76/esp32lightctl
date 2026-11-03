@@ -16,6 +16,7 @@
 
 - [ESP Zigbee SDK 发布说明](https://github.com/espressif/esp-zigbee-sdk/blob/main/RELEASE_NOTES.md)
 - [ESP-IDF ESP32-C6 RF coexistence](https://docs.espressif.com/projects/esp-idf/en/stable/esp32c6/api-guides/coexist.html)
+- [Espressif mDNS 组件文档](https://github.com/espressif/esp-protocols/blob/master/docs/mdns/en/index.rst)
 - [QBKG25LM 转换器定义](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/lumi.ts)
 - [Aqara 自定义 Cluster/属性定义](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/lib/lumi.ts)
 - [QBKG25LM 设备资料与配对步骤](https://www.zigbee2mqtt.io/devices/QBKG25LM.html)
@@ -25,6 +26,8 @@
 - 首次启动生成随机 WPA2 配置热点；SSID 与一次性密码输出到 USB 串口。
 - 移动端配置页写入 Wi-Fi SSID/密码和至少 12 位的管理密码，随后重启为 STA 模式。
 - Wi-Fi 断线指数退避自动重连；串口打印连接状态和 IPv4 地址。
+- STA 地址由 DHCP 获取；联网后发布可配置的 `http://<设备名>.local` mDNS 地址，默认 `http://lightgw.local`。页面同时显示 IPv4、STA MAC 和 RSSI，mDNS 不可用时可继续使用当前 IPv4。
+- 管理员可从 Web 明确确认后进入安全重新配网：仅清除 Wi-Fi 凭据并重启到随机 WPA2 临时热点，保留原管理认证；配网完成即关闭热点。
 - 管理密码使用随机盐 + PBKDF2-HMAC-SHA256（120,000 次）保存；控制页面及 API 使用 HTTP Basic 访问控制。
 - Coordinator 建网、180 秒允许入网、设备 announce、Active Endpoint/Simple Descriptor/model 发现。
 - Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
@@ -40,7 +43,7 @@ main/
   stage_config.h         单源码 Stage 1～4 功能边界
   diagnostics.c          运行时间、Heap、复位和最近错误诊断
   settings.c             NVS、PBKDF2 管理密码、定时配置
-  wifi_manager.c         首次配网、STA 重连、NTP
+  wifi_manager.c         首次/重新配网、DHCP、mDNS、STA 重连、NTP
   web_server.c           鉴权 HTTP API
   zigbee_manager.c       Coordinator、发现、Aqara 协议、状态同步
   scheduler.c            每周定时自动关闭
@@ -84,7 +87,7 @@ idf.py -B build-stage3 -D LIGHTGW_STAGE=3 build
 idf.py -B build-stage4 -D LIGHTGW_STAGE=4 build
 ```
 
-Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-lib =1.6.8` 和 `esp-zboss-lib =1.6.4`。不要把约束改成 `*` 或直接用 SDK main 分支。
+Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-lib =1.6.8`、`esp-zboss-lib =1.6.4` 和官方 `mdns =1.14.1`。不要把约束改成 `*` 或直接用 SDK main 分支。
 
 ### 本地编译验证记录
 
@@ -130,11 +133,13 @@ idf.py -p COM7 erase-flash flash monitor
    ```
 
 2. 手机连接该热点，浏览器访问 `http://192.168.4.1/`。
-3. 输入办公室 Wi-Fi、管理用户名和至少 12 位管理密码。固件不会在日志或状态 API 中回显 Wi-Fi 密码。
-4. 保存后板子重启。串口出现 `Wi-Fi connected, IP: ...`，在同一局域网访问该 IP。
+3. 输入办公室 Wi-Fi、设备名称（默认 `lightgw`）、管理用户名和至少 12 位管理密码。设备名仅允许小写字母、数字和中间连字符，例如 `lightgw-office1`。固件不会在日志或状态 API 中回显 Wi-Fi 密码。
+4. 保存后板子重启。串口出现 DHCP 地址和 `mDNS started` 日志，在同一局域网访问 `http://<设备名>.local`；若客户端或网络不支持 mDNS，则使用日志/页面显示的当前 IPv4。
 5. 浏览器弹出认证框时输入刚设置的管理凭据。
 
 如果办公室 Wi-Fi 使用开放认证、WPA-Enterprise/802.1X、强制门户或仅 5 GHz，本版 STA 配置不适用。当前阈值为 WPA2-PSK，WPA2/WPA3 personal mixed AP 可按现场结果调整。
+
+办公室部署多台网关时必须分配不同设备名，例如 `lightgw-office1`、`lightgw-office2`。`.local` 解析依赖客户端 mDNS 支持、局域网组播和防火墙策略；解析失败不是 HTTP 服务失效，应改用页面或串口显示的 DHCP IPv4。
 
 ## QBKG25LM 配对与测试
 
@@ -179,6 +184,7 @@ idf.py -p COM7 erase-flash flash monitor
 - 单火负载类型、最小功率、防闪烁模式和断电恢复表现；
 - 现场 RF 环境中的长时间共存可靠性；
 - NTP/DNS/防火墙策略与办公室 Wi-Fi 的兼容性。
+- 客户端、交换机/AP 和防火墙对 mDNS 组播的支持，以及断线重连、DHCP 地址变化后的解析更新。
 
 遇到问题请保留从复位开始的完整 `idf.py monitor` 日志，尤其是 Zigbee announce、Simple Descriptor、read/report response、Wi-Fi disconnect reason 和 backtrace。
 

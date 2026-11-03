@@ -1,4 +1,5 @@
 dependencies:
+  espressif/mdns: "=1.14.1"
   espressif/esp-zigbee-lib: "=1.6.8"
   espressif/esp-zboss-lib: "=1.6.4"
   idf:

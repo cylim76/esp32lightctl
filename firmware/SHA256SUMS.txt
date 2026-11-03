@@ -1,18 +1,18 @@
-# ESP-IDF 5.5.1 / esp-zigbee-lib 1.6.8 / esp-zboss-lib 1.6.4
+# ESP-IDF 5.5.1 / esp-zigbee-lib 1.6.8 / esp-zboss-lib 1.6.4 / mdns 1.14.1
 # Built 2026-11-03. BUILD ONLY; no hardware test has been performed.
 
-6d0b131bf23a2554192620eab9eee531321416317ef24592c95b1828415cf27d  stage1/esp32c6_light_gateway.bin
+b64e2a44075b649e4196629f4b3245933b62525404c92210b0ffbaa29bafa424  stage1/esp32c6_light_gateway.bin
 11992af223d927a891e6b49430125273707e548335ba1357fdbfd63a18ada24b  stage1/bootloader.bin
 9087e0ba8008ce05983c896735c945801f3c34d4e4038528ddd619116765659b  stage1/partition-table.bin
 
-375c65428fb31c2b53b6d71b7cd14e4fabee8910a41e0aa105c305a034f70509  stage2/esp32c6_light_gateway.bin
+a0a213ad5a87842625b9b4b0883545bbfce11324b070f3608f0031d39cc1bf60  stage2/esp32c6_light_gateway.bin
 604d68e8ffb0950ecd0e7ded1a2db491af62a72aa54e305ec55ef0a0b89ac4c8  stage2/bootloader.bin
 9087e0ba8008ce05983c896735c945801f3c34d4e4038528ddd619116765659b  stage2/partition-table.bin
 
-2361e16719d161216fdf8eea3ef6c6219545a0189de8bd37a71487365d4c5cb2  stage3/esp32c6_light_gateway.bin
+710c11c2bf8c1901f0695396df80c2016b64d91766a30477cd29e9ea47046b56  stage3/esp32c6_light_gateway.bin
 d77fc765e7c488d927112eec4e821d2f9449422318b2eda08cae07c213aac584  stage3/bootloader.bin
 9087e0ba8008ce05983c896735c945801f3c34d4e4038528ddd619116765659b  stage3/partition-table.bin
 
-74ca08c82bd36593c9cc3b3c1ecb1041d7b3be914eb8db411f970cdbeab63522  stage4/esp32c6_light_gateway.bin
+398bcf8c1eba67d455d7cd96dfee1b8ef1b538322e7de747f2610dca21295814  stage4/esp32c6_light_gateway.bin
 69caafe8258df2c8f59989cf92e55efc562278479708986d1af6cf0254329dd4  stage4/bootloader.bin
 9087e0ba8008ce05983c896735c945801f3c34d4e4038528ddd619116765659b  stage4/partition-table.bin

@@ -16,6 +16,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "mdns.h"
 #include "settings.h"
 
 #define WIFI_CONNECTED_BIT BIT0
@@ -28,8 +29,32 @@ static char s_ap_ssid[33];
 static char s_ap_password[17];
 static bool s_provisioning;
 static bool s_sntp_started;
+static bool s_mdns_started;
 static unsigned s_retry;
 static esp_timer_handle_t s_retry_timer;
+static esp_netif_t *s_sta_netif;
+
+static esp_err_t start_mdns_once(void)
+{
+    if (s_mdns_started) return ESP_OK;
+    const char *hostname = settings_get()->device_name;
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK) {
+        diagnostics_set_error(TAG, "mDNS init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = mdns_hostname_set(hostname);
+    if (err == ESP_OK) err = mdns_instance_name_set(hostname);
+    if (err == ESP_OK) err = mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    if (err != ESP_OK) {
+        mdns_free();
+        diagnostics_set_error(TAG, "mDNS start failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    s_mdns_started = true;
+    ESP_LOGI(TAG, "mDNS started: http://%s.local", hostname);
+    return ESP_OK;
+}
 
 static void retry_timer_cb(void *arg)
 {
@@ -66,6 +91,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         ++s_retry;
         ESP_LOGW(TAG, "Wi-Fi disconnected reason=%u; retry %u in %u ms",
                  event ? event->reason : 0, s_retry, backoff_ms);
+        if (s_mdns_started) ESP_LOGI(TAG, "mDNS remains registered and will follow the STA reconnect/IP change");
         diagnostics_set_error(TAG, "disconnected reason=%u", event ? event->reason : 0);
         if (!esp_timer_is_active(s_retry_timer)) esp_timer_start_once(s_retry_timer, (uint64_t)backoff_ms * 1000);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -73,7 +99,8 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&event->ip_info.ip));
         s_retry = 0;
         xEventGroupSetBits(s_events, WIFI_CONNECTED_BIT);
-        ESP_LOGI(TAG, "Wi-Fi connected, IP: %s", s_ip);
+        ESP_LOGI(TAG, "Wi-Fi connected, IP: %s (DHCP)", s_ip);
+        start_mdns_once();
         start_sntp_once();
     }
 }
@@ -110,6 +137,7 @@ static esp_err_t start_sta(const app_settings_t *cfg)
     sta.sta.pmf_cfg.required = false;
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "set STA mode");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &sta), TAG, "set STA config");
+    ESP_RETURN_ON_ERROR(esp_netif_set_hostname(s_sta_netif, cfg->device_name), TAG, "set DHCP hostname");
     ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_MIN_MODEM), TAG, "set modem sleep");
     s_provisioning = false;
     return ESP_OK;
@@ -121,8 +149,9 @@ esp_err_t wifi_manager_start(void)
     if (!s_events) return ESP_ERR_NO_MEM;
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "netif init");
     ESP_RETURN_ON_ERROR(esp_event_loop_create_default(), TAG, "event loop");
-    esp_netif_create_default_wifi_sta();
+    s_sta_netif = esp_netif_create_default_wifi_sta();
     esp_netif_create_default_wifi_ap();
+    if (!s_sta_netif) return ESP_ERR_NO_MEM;
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&init), TAG, "Wi-Fi init");
@@ -154,6 +183,28 @@ void wifi_manager_get_ip(char *out, size_t out_len)
 }
 
 const char *wifi_manager_provision_ssid(void) { return s_ap_ssid; }
+
+void wifi_manager_get_mac(char *out, size_t out_len)
+{
+    if (!out || out_len == 0) return;
+    uint8_t mac[6] = {0};
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        snprintf(out, out_len, "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        strlcpy(out, "unknown", out_len);
+    }
+}
+
+bool wifi_manager_mdns_active(void)
+{
+    return s_mdns_started && wifi_manager_is_connected();
+}
+
+const char *wifi_manager_mdns_hostname(void)
+{
+    return settings_get()->device_name;
+}
 
 int wifi_manager_get_rssi(void)
 {

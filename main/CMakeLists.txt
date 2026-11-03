@@ -19,7 +19,7 @@ idf_component_register(
     EMBED_FILES "web/index.html"
     REQUIRES
         esp_coex esp_event esp_http_server esp_netif esp_system esp_timer esp_wifi espcoredump
-        json lwip mbedtls nvs_flash
+        json lwip mbedtls mdns nvs_flash
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE LIGHTGW_STAGE=${LIGHTGW_STAGE})

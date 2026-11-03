@@ -16,6 +16,10 @@
 - 手机连接 `192.168.4.1`，保存 Wi-Fi 与至少 12 位管理密码。
 - 重启后 STA 获得 IP，页面需要 HTTP Basic 认证。
 - 页面显示 RSSI、IP、运行时间、Free Heap、Minimum Free Heap、复位原因和最近错误。
+- 页面显示 STA MAC、设备名称和 mDNS 主机名；验证 `http://lightgw.local`（或配置名）与当前 IPv4 均可访问。
+- 从管理页触发重新配网，确认未认证请求被拒绝、旧 Wi-Fi 凭据被清除、随机 WPA2 热点启动且管理认证仍然有效。
+- 将设备名改为 `lightgw-office1` 后确认 DHCP hostname、mDNS 地址和页面显示一致。
+- Wi-Fi 断开、重连及 DHCP 地址变化后重新验证 mDNS 与 IPv4 访问。
 - 连续断开/恢复 AP 三次，记录断线 reason 和重连时间。
 - 断电 30 秒后配置仍存在，启动不改变任何灯具状态。
 

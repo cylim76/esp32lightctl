@@ -10,6 +10,10 @@
 | HW-004 | 1 | HTTP Basic 未授权访问拦截 | NOT TESTED | — | 等待硬件 |
 | HW-005 | 1 | NVS 断电持久化 | NOT TESTED | — | 等待硬件 |
 | HW-006 | 1 | Wi-Fi 断线自动重连 | NOT TESTED | — | 等待硬件 |
+| HW-007 | 1 | DHCP IPv4、STA MAC 与 RSSI 显示 | NOT TESTED | — | 等待硬件 |
+| HW-008 | 1 | 默认及自定义主机名 mDNS 解析 | NOT TESTED | — | 等待硬件 |
+| HW-009 | 1 | 断线/重连/IP 变化后的 mDNS 更新 | NOT TESTED | — | 等待硬件 |
+| HW-010 | 1 | 管理员认证重新配网与临时 WPA2 AP | NOT TESTED | — | 等待硬件 |
 | HW-101 | 2 | Coordinator 首次建网与恢复 | NOT TESTED | — | 等待硬件 |
 | HW-102 | 2 | Permit Join 180 秒 | NOT TESTED | — | 等待硬件 |
 | HW-103 | 2 | Wi-Fi/Zigbee 单芯片 RF 共存 | NOT TESTED | — | 等待硬件 |
