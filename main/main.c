@@ -4,6 +4,9 @@
 #include "nvs_flash.h"
 #include "diagnostics.h"
 #include "stage_config.h"
+#if LIGHTGW_HAS_IR
+#include "ir_manager.h"
+#endif
 #if LIGHTGW_HAS_SCHEDULER
 #include "scheduler.h"
 #endif
@@ -36,6 +39,9 @@ void app_main(void)
 #endif
 #if LIGHTGW_HAS_SCHEDULER
     ESP_ERROR_CHECK(scheduler_start());
+#endif
+#if LIGHTGW_HAS_IR
+    ESP_ERROR_CHECK(ir_manager_start());
 #endif
     ESP_LOGI(TAG, "ESP32-C6 standalone light gateway Stage %d started", LIGHTGW_STAGE);
 }

@@ -1,6 +1,6 @@
 # ESP32-C6 独立 Zigbee 智能照明网关
 
-面向 `ESP32-C6-DevKitC-1-N8` 与 Aqara D1 单火三开 `QBKG25LM` 的独立局域网网关。同一套源码可构建四个独立验证阶段；完整 Stage 4 在一块 C6 上同时运行 Wi-Fi STA、Zigbee Coordinator、HTTP 控制页、NTP 和本地定时任务，不需要 Aqara 网关、Zigbee2MQTT、Home Assistant、MQTT 或常开 PC。
+面向 `ESP32-C6-DevKitC-1-N8`、Aqara D1 单火三开 `QBKG25LM` 和 LG 红外空调的独立局域网网关。同一套源码可构建五个独立验证阶段；Stage 5 在 Stage 4 基础上增加 RMT 红外学习、重放和空调定时，不需要 Aqara 网关、Zigbee2MQTT、Home Assistant、MQTT 或常开 PC。
 
 > 安全警告：QBKG25LM 直接连接市电。安装、拆卸和测量必须断电，并由具备资质的电工执行。ESP32 开发板不能与开关的市电端子有任何电气连接；两者只通过 Zigbee 通信。
 
@@ -34,19 +34,25 @@
 - Zigbee 栈网络数据保存在 `zb_storage` 分区；应用设备表、Wi-Fi 和定时设置保存在 NVS。
 - 最多 8 条按星期自动全部关灯计划，每条可独立启用；仅在 Wi-Fi 在线并在本次连接中 NTP 同步成功后执行。断网时跳过，不补发。
 - 默认定时关闭，启动/重启不会主动改变继电器状态。
+- Stage 5 使用 ESP-IDF 原生 RMT：GPIO19 学习解调后的原始 mark/space，连续三次稳定后才允许确认；GPIO18 通过异步队列重放，支持两组关机码、可调载波/占空比和独立空调定时。
+- 红外码存放于 Stage 5 专用 64KB NVS 分区。38kHz 是默认配置/估计值，不会被标记为接收头实测载波；页面严格区分“任务已提交”“RMT 已发送”和“空调实际状态未知”。
 
 ## 工程结构
 
 ```text
 main/
   main.c                 初始化顺序
-  stage_config.h         单源码 Stage 1～4 功能边界
+  stage_config.h         单源码 Stage 1～5 功能边界
   diagnostics.c          运行时间、Heap、复位和最近错误诊断
   settings.c             NVS、PBKDF2 管理密码、定时配置
   wifi_manager.c         首次/重新配网、DHCP、mDNS、STA 重连、NTP
   web_server.c           鉴权 HTTP API
   zigbee_manager.c       Coordinator、发现、Aqara 协议、状态同步
   scheduler.c            每周定时自动关闭
+  ir_receiver.c          RMT RX、长帧采集、LG 候选识别
+  ir_transmitter.c       RMT TX、载波、原始码重放和安全限制
+  ir_storage.c           两组红外码与空调定时的独立 NVS
+  ir_manager.c           三次学习、异步队列、状态和空调调度
   web/index.html         内置移动端页面
 partitions.csv           NVS、应用、Zigbee 持久化、coredump
 sdkconfig.defaults       C6、共存、Zigbee 默认配置
@@ -70,6 +76,7 @@ build-stage.bat 1
 build-stage.bat 2
 build-stage.bat 3
 build-stage.bat 4
+build-stage.bat 5
 ```
 
 ### Linux/macOS
@@ -85,13 +92,14 @@ idf.py -B build-stage1 -D LIGHTGW_STAGE=1 build
 idf.py -B build-stage2 -D LIGHTGW_STAGE=2 build
 idf.py -B build-stage3 -D LIGHTGW_STAGE=3 build
 idf.py -B build-stage4 -D LIGHTGW_STAGE=4 build
+idf.py -B build-stage5 -D LIGHTGW_STAGE=5 build
 ```
 
 Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-lib =1.6.8`、`esp-zboss-lib =1.6.4` 和官方 `mdns =1.14.1`。不要把约束改成 `*` 或直接用 SDK main 分支。
 
 ### 本地编译验证记录
 
-2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～4 执行了真实 `idf.py build`。构建结果、应用大小及最终 SHA-256 记录在 [BUILD.md](BUILD.md) 和 [firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt)。这些结果只证明编译与链接通过，不代表硬件测试通过。
+2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～5 执行了真实 `idf.py build`。构建结果、应用大小及最终 SHA-256 记录在 [BUILD.md](BUILD.md) 和 [firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt)。这些结果只证明编译与链接通过，不代表硬件测试通过。
 
 ## USB 烧录与监控
 
@@ -108,6 +116,7 @@ monitor.bat COM7 1
 flash.bat COM7 2
 flash.bat COM7 3
 flash.bat COM7 4
+flash.bat COM7 5
 ```
 
 Linux 示例：
@@ -187,5 +196,7 @@ idf.py -p COM7 erase-flash flash monitor
 - 客户端、交换机/AP 和防火墙对 mDNS 组播的支持，以及断线重连、DHCP 地址变化后的解析更新。
 
 遇到问题请保留从复位开始的完整 `idf.py monitor` 日志，尤其是 Zigbee announce、Simple Descriptor、read/report response、Wi-Fi disconnect reason 和 backtrace。
+
+Stage 5 的低压接线、电源边界和红外硬件验证分别见 [IR_WIRING.md](IR_WIRING.md) 与 [IR_TEST_PLAN.md](IR_TEST_PLAN.md)。红外模块未经实物验证；LG 协议识别结果只是候选判断，最终必须以学习码重放和空调实际响应为准。
 
 统一硬件验证状态见 [HARDWARE_TEST_RECORD.md](HARDWARE_TEST_RECORD.md)。开发板到货前全部硬件测试均保持 `NOT TESTED`，不得因固件成功生成而改成 `PASS`。

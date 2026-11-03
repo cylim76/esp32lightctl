@@ -4,7 +4,7 @@ set "PORT=%~1"
 set "STAGE=%~2"
 if "%PORT%"=="" goto usage
 if "%STAGE%"=="" set "STAGE=1"
-if not "%STAGE%"=="1" if not "%STAGE%"=="2" if not "%STAGE%"=="3" if not "%STAGE%"=="4" goto usage
+if not "%STAGE%"=="1" if not "%STAGE%"=="2" if not "%STAGE%"=="3" if not "%STAGE%"=="4" if not "%STAGE%"=="5" goto usage
 where idf.py >nul 2>nul || goto no_idf
 if exist "build-stage%STAGE%\esp32c6_light_gateway.elf" (
   idf.py -B build-stage%STAGE% -p %PORT% monitor

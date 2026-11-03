@@ -15,6 +15,10 @@
 #include "settings.h"
 #include "stage_config.h"
 #include "wifi_manager.h"
+#if LIGHTGW_HAS_IR
+#include "app_config.h"
+#include "ir_manager.h"
+#endif
 #if LIGHTGW_HAS_ZIGBEE
 #include "zigbee_manager.h"
 #endif
@@ -174,6 +178,48 @@ static esp_err_t status_get(httpd_req_t *req)
         cJSON_AddItemToArray(array, d);
     }
 #endif
+#if LIGHTGW_HAS_IR
+    ir_status_t ir;
+    ir_manager_get_status(&ir);
+    cJSON *ir_json = cJSON_AddObjectToObject(root, "ir");
+    cJSON_AddBoolToObject(ir_json, "initialized", ir.initialized);
+    cJSON_AddNumberToObject(ir_json, "tx_gpio", APP_IR_TX_GPIO);
+    cJSON_AddNumberToObject(ir_json, "rx_gpio", APP_IR_RX_GPIO);
+    cJSON_AddBoolToObject(ir_json, "learning", ir.learning);
+    cJSON_AddBoolToObject(ir_json, "transmitting", ir.transmitting);
+    cJSON_AddNumberToObject(ir_json, "learning_slot", ir.learning_slot);
+    cJSON_AddNumberToObject(ir_json, "stable_captures", ir.stable_captures);
+    cJSON_AddNumberToObject(ir_json, "required_captures", IR_CAPTURE_REQUIRED);
+    cJSON_AddNumberToObject(ir_json, "attempts", ir.attempts);
+    cJSON_AddBoolToObject(ir_json, "candidate_ready", ir.candidate_ready);
+    cJSON_AddNumberToObject(ir_json, "candidate_duration_count", ir.candidate_duration_count);
+    cJSON_AddNumberToObject(ir_json, "candidate_total_us", ir.candidate_total_us);
+    cJSON_AddStringToObject(ir_json, "candidate_protocol", ir_protocol_name(ir.candidate_protocol));
+    cJSON_AddStringToObject(ir_json, "carrier_note", "configured/estimated; not measured by the 38kHz demodulating receiver");
+    cJSON *slots = cJSON_AddArrayToObject(ir_json, "slots");
+    for (int i = 0; i < IR_CODE_SLOT_COUNT; ++i) {
+        cJSON *slot = cJSON_CreateObject();
+        cJSON_AddBoolToObject(slot, "saved", ir.code_saved[i]);
+        cJSON_AddNumberToObject(slot, "duration_count", ir.duration_count[i]);
+        cJSON_AddNumberToObject(slot, "carrier_hz", ir.carrier_hz[i]);
+        cJSON_AddNumberToObject(slot, "duty_percent", ir.duty_percent[i]);
+        cJSON_AddStringToObject(slot, "protocol", ir_protocol_name(ir.protocol[i]));
+        cJSON_AddNumberToObject(slot, "crc32", ir.code_crc[i]);
+        cJSON_AddItemToArray(slots, slot);
+    }
+    cJSON_AddNumberToObject(ir_json, "last_send_epoch", ir.last_send_epoch);
+    cJSON_AddNumberToObject(ir_json, "last_send_uptime_seconds", ir.last_send_uptime_seconds);
+    cJSON_AddNumberToObject(ir_json, "last_send_slot_mask", ir.last_send_slot_mask);
+    cJSON_AddStringToObject(ir_json, "last_send_result", ir.last_send_result);
+    cJSON_AddStringToObject(ir_json, "schedule_status", ir.schedule_skip_reason);
+    cJSON *ir_schedule = cJSON_AddObjectToObject(ir_json, "schedule");
+    cJSON_AddBoolToObject(ir_schedule, "enabled", ir.schedule.enabled != 0);
+    cJSON_AddBoolToObject(ir_schedule, "use_light_schedules", ir.schedule.use_light_schedules != 0);
+    cJSON_AddNumberToObject(ir_schedule, "hour", ir.schedule.hour);
+    cJSON_AddNumberToObject(ir_schedule, "minute", ir.schedule.minute);
+    cJSON_AddNumberToObject(ir_schedule, "days", ir.schedule.days);
+    cJSON_AddNumberToObject(ir_schedule, "slot_mask", ir.schedule.slot_mask);
+#endif
     char *text = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -244,6 +290,95 @@ static esp_err_t pair_post(httpd_req_t *req)
     if (value < 1 || value > 180) return send_json_error(req, "400 Bad Request", "Pairing window must be 1..180 seconds");
     esp_err_t err = zigbee_manager_permit_join(value);
     return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") : send_json_error(req, "503 Service Unavailable", esp_err_to_name(err));
+}
+#endif
+
+#if LIGHTGW_HAS_IR
+static esp_err_t ir_learn_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    cJSON *slot = j ? cJSON_GetObjectItem(j, "slot") : NULL;
+    if (!cJSON_IsNumber(slot) || slot->valuedouble != slot->valueint || slot->valueint < 0 || slot->valueint >= IR_CODE_SLOT_COUNT) {
+        cJSON_Delete(j);
+        return send_json_error(req, "400 Bad Request", "slot must be 0 or 1");
+    }
+    esp_err_t err = ir_manager_start_learning(slot->valueint);
+    cJSON_Delete(j);
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"Press the explicit OFF key three times\"}") :
+                           send_json_error(req, "409 Conflict", esp_err_to_name(err));
+}
+
+static esp_err_t ir_save_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    cJSON *slot = j ? cJSON_GetObjectItem(j, "slot") : NULL;
+    cJSON *carrier = j ? cJSON_GetObjectItem(j, "carrier_hz") : NULL;
+    cJSON *duty = j ? cJSON_GetObjectItem(j, "duty_percent") : NULL;
+    if (!cJSON_IsNumber(slot) || !cJSON_IsNumber(carrier) || !cJSON_IsNumber(duty) ||
+        slot->valuedouble != slot->valueint || carrier->valuedouble != carrier->valueint ||
+        duty->valuedouble != duty->valueint ||
+        slot->valueint < 0 || slot->valueint >= IR_CODE_SLOT_COUNT || carrier->valueint < 30000 ||
+        carrier->valueint > 60000 || duty->valueint < 10 || duty->valueint > 50) {
+        cJSON_Delete(j);
+        return send_json_error(req, "400 Bad Request", "invalid slot/carrier/duty");
+    }
+    esp_err_t err = ir_manager_save_candidate(slot->valueint, carrier->valueint, duty->valueint);
+    cJSON_Delete(j);
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") :
+                           send_json_error(req, "409 Conflict", esp_err_to_name(err));
+}
+
+static esp_err_t ir_send_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    cJSON *mask = j ? cJSON_GetObjectItem(j, "slot_mask") : NULL;
+    cJSON *repeats = j ? cJSON_GetObjectItem(j, "repeats") : NULL;
+    if (!cJSON_IsNumber(mask) || !cJSON_IsNumber(repeats) || mask->valuedouble != mask->valueint ||
+        repeats->valuedouble != repeats->valueint || mask->valueint < 1 || mask->valueint > 3 ||
+        repeats->valueint < 1 || repeats->valueint > 2) {
+        cJSON_Delete(j);
+        return send_json_error(req, "400 Bad Request", "slot_mask must be 1..3 and repeats 1..2");
+    }
+    esp_err_t err = ir_manager_enqueue_send(mask->valueint, repeats->valueint, "manual");
+    cJSON_Delete(j);
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"IR queued; AC state remains unconfirmed\"}") :
+                           send_json_error(req, "409 Conflict", esp_err_to_name(err));
+}
+
+static esp_err_t ir_schedule_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    cJSON *enabled = j ? cJSON_GetObjectItem(j, "enabled") : NULL;
+    cJSON *same = j ? cJSON_GetObjectItem(j, "use_light_schedules") : NULL;
+    cJSON *hour = j ? cJSON_GetObjectItem(j, "hour") : NULL;
+    cJSON *minute = j ? cJSON_GetObjectItem(j, "minute") : NULL;
+    cJSON *days = j ? cJSON_GetObjectItem(j, "days") : NULL;
+    cJSON *mask = j ? cJSON_GetObjectItem(j, "slot_mask") : NULL;
+    if (!cJSON_IsBool(enabled) || !cJSON_IsBool(same) || !cJSON_IsNumber(hour) || !cJSON_IsNumber(minute) ||
+        !cJSON_IsNumber(days) || !cJSON_IsNumber(mask) || hour->valuedouble != hour->valueint ||
+        minute->valuedouble != minute->valueint || days->valuedouble != days->valueint ||
+        mask->valuedouble != mask->valueint || hour->valueint < 0 || hour->valueint > 23 ||
+        minute->valueint < 0 || minute->valueint > 59 || days->valueint < 0 || days->valueint > 127 ||
+        mask->valueint < 1 || mask->valueint > 3) {
+        cJSON_Delete(j);
+        return send_json_error(req, "400 Bad Request", "invalid IR schedule");
+    }
+    ir_schedule_t schedule = {
+        .enabled = cJSON_IsTrue(enabled),
+        .use_light_schedules = cJSON_IsTrue(same),
+        .hour = hour->valueint,
+        .minute = minute->valueint,
+        .days = days->valueint,
+        .slot_mask = mask->valueint,
+    };
+    esp_err_t err = ir_manager_save_schedule(&schedule);
+    cJSON_Delete(j);
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") :
+                           send_json_error(req, "400 Bad Request", esp_err_to_name(err));
 }
 #endif
 
@@ -330,7 +465,7 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 12;
+    cfg.max_uri_handlers = 16;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
@@ -348,6 +483,12 @@ esp_err_t web_server_start(void)
 #endif
 #if LIGHTGW_HAS_SCHEDULER
         {.uri = "/api/schedule", .method = HTTP_POST, .handler = schedule_post},
+#endif
+#if LIGHTGW_HAS_IR
+        {.uri = "/api/ir/learn", .method = HTTP_POST, .handler = ir_learn_post},
+        {.uri = "/api/ir/save", .method = HTTP_POST, .handler = ir_save_post},
+        {.uri = "/api/ir/send", .method = HTTP_POST, .handler = ir_send_post},
+        {.uri = "/api/ir/schedule", .method = HTTP_POST, .handler = ir_schedule_post},
 #endif
     };
     for (size_t i = 0; i < sizeof(handlers) / sizeof(handlers[0]); ++i) {

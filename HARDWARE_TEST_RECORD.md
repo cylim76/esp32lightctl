@@ -1,6 +1,6 @@
 # 硬件测试记录
 
-硬件：ESP32-C6-DevKitC-1-N8 + Aqara QBKG25LM。当前开发板尚未到货，以下项目全部为 `NOT TESTED`。构建成功只记录在 `BUILD.md`。
+硬件：ESP32-C6-DevKitC-1-N8 + Aqara QBKG25LM + 红外 RX/TX 模块 + LG 空调。以下未执行项目全部为 `NOT TESTED`。构建成功只记录在 `BUILD.md`。
 
 | ID | Stage | 测试项 | 状态 | 日期/固件 | 证据或备注 |
 |---|---:|---|---|---|---|
@@ -28,5 +28,14 @@
 | HW-305 | 4 | Wi-Fi/Zigbee 掉线恢复 | NOT TESTED | — | 等待硬件 |
 | HW-306 | 4 | 72 小时稳定性与内存趋势 | NOT TESTED | — | 等待硬件 |
 | HW-307 | 4 | 多条每日关灯计划独立触发且不重复 | NOT TESTED | — | 测试 17:00、19:30、20:30、21:30、23:59 |
+| HW-401 | 5 | GPIO18 TX / GPIO19 RX 电气与空闲状态 | NOT TESTED | — | 先确认模块电压和引脚 |
+| HW-402 | 5 | LG 明确 OFF 三次稳定学习 | NOT TESTED | — | 不得以 Toggle 代替 |
+| HW-403 | 5 | 两组红外码 NVS 持久化及拆除 RX | NOT TESTED | — | 等待硬件 |
+| HW-404 | 5 | 单台 LG 学习码重放实际关机 | NOT TESTED | — | “已发送”不等于实际关闭 |
+| HW-405 | 5 | 一个发射模块覆盖两台空调 | NOT TESTED | — | 先一台再两台 |
+| HW-406 | 5 | 空调独立/复用灯光时间定时 | NOT TESTED | — | NTP、断网、同分钟防重复 |
+| HW-407 | 5 | Wi-Fi + Zigbee + RMT 共存 | NOT TESTED | — | 记录 Heap、掉线与超时 |
+| HW-408 | 5 | 1W 模块供电压降及 ESP32 复位 | NOT TESTED | — | 不假设板载5V可提供350mA |
+| HW-409 | 5 | 红外功能72小时稳定性 | NOT TESTED | — | 等待硬件 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。

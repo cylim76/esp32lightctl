@@ -20,6 +20,7 @@ monitor.bat COM7 1
 flash.bat COM7 2
 flash.bat COM7 3
 flash.bat COM7 4
+flash.bat COM7 5
 ```
 
 对应原生 `idf.py` 命令：
@@ -29,6 +30,7 @@ idf.py -B build-stage1 -D LIGHTGW_STAGE=1 -p COM7 flash
 idf.py -B build-stage2 -D LIGHTGW_STAGE=2 -p COM7 flash
 idf.py -B build-stage3 -D LIGHTGW_STAGE=3 -p COM7 flash
 idf.py -B build-stage4 -D LIGHTGW_STAGE=4 -p COM7 flash
+idf.py -B build-stage5 -D LIGHTGW_STAGE=5 -p COM7 flash
 ```
 
 串口监控：
@@ -59,13 +61,13 @@ python -m esptool --chip esp32c6 -b 460800 --before default_reset --after hard_r
 
 ## 数据保留与清除
 
-直接从 Stage 1 升级到 Stage 2/3/4 时 NVS 会保留。需要全新测试时才执行：
+直接从 Stage 1 升级到 Stage 2/3/4/5 时主 NVS 会保留。Stage 5 必须同时烧录它自己的 `partition-table.bin`，`flash.bat COM7 5` 会自动完成；新增的 `ir_data` 位于原 coredump 分区之后，不改变原 NVS、应用、Zigbee 或 coredump 地址。需要全新测试时才执行：
 
 ```bat
 idf.py -p COM7 erase-flash
 ```
 
-该命令会清除 Wi-Fi、管理凭据、设备诊断、端点映射和 Zigbee 网络，且不可恢复。不要在已有 Zigbee 网络上随意执行。
+该命令会清除 Wi-Fi、管理凭据、设备诊断、端点映射、Zigbee 网络以及 Stage 5 学习到的红外码，且不可恢复。不要在已有网络上随意执行。
 
 ## 必须保留的日志
 
