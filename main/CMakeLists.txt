@@ -6,6 +6,7 @@ set(app_sources
     "time_manager.c"
     "web_server.c"
     "diagnostics.c"
+    "storage_manager.c"
 )
 set(app_requires
     esp_coex esp_event esp_http_server esp_netif esp_system esp_timer esp_wifi espcoredump
@@ -16,7 +17,7 @@ if(LIGHTGW_STAGE GREATER_EQUAL 2)
     list(APPEND app_sources "zigbee_manager.c" "zigbee_state_cache.c")
 endif()
 if(LIGHTGW_STAGE GREATER_EQUAL 4)
-    list(APPEND app_sources "scheduler.c" "device_control.c" "device_state.c")
+    list(APPEND app_sources "scheduler.c" "scheduler_persistence.c" "device_control.c" "device_state.c")
 endif()
 if(LIGHTGW_STAGE GREATER_EQUAL 5)
     list(APPEND app_sources

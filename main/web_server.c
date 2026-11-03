@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
 #include "settings.h"
+#include "storage_manager.h"
 #include "stage_config.h"
 #if LIGHTGW_HAS_CONTROL
 #include "device_control.h"
@@ -327,6 +328,9 @@ static esp_err_t resources_get(httpd_req_t *req)
     diagnostics_refresh_task_stats();
     diagnostics_heap_t heap;
     diagnostics_get_heap(&heap);
+    storage_manager_refresh_stats();
+    storage_status_t storage;
+    storage_manager_get_status(&storage);
     bool truncated = false, enabled = false;
     size_t task_count = diagnostics_task_count(&truncated, &enabled);
 
@@ -337,6 +341,32 @@ static esp_err_t resources_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "largest_free_block", heap.largest_free_block);
     cJSON_AddBoolToObject(root, "task_monitor_enabled", enabled);
     cJSON_AddBoolToObject(root, "tasks_truncated", truncated);
+    cJSON *storage_json = cJSON_AddObjectToObject(root, "storage");
+    cJSON_AddBoolToObject(storage_json, "degraded", storage.degraded);
+    cJSON_AddNumberToObject(storage_json, "write_attempts", storage.write_attempts);
+    cJSON_AddNumberToObject(storage_json, "writes_committed", storage.writes_committed);
+    cJSON_AddNumberToObject(storage_json, "writes_skipped", storage.writes_skipped);
+    cJSON_AddNumberToObject(storage_json, "write_failures", storage.write_failures);
+    cJSON_AddNumberToObject(storage_json, "corruption_events", storage.corruption_events);
+    cJSON_AddStringToObject(storage_json, "last_error", storage.last_error);
+    cJSON_AddStringToObject(storage_json, "last_recovery", storage.last_recovery);
+    cJSON *partitions = cJSON_AddArrayToObject(storage_json, "partitions");
+    const storage_partition_status_t *partition_status[] = {
+        &storage.primary, &storage.runtime, &storage.ir,
+    };
+    for (size_t i = 0; i < sizeof(partition_status) / sizeof(partition_status[0]); ++i) {
+        const storage_partition_status_t *p = partition_status[i];
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "name", p->name);
+        cJSON_AddBoolToObject(item, "initialized", p->initialized);
+        cJSON_AddBoolToObject(item, "stats_valid", p->stats_valid);
+        cJSON_AddNumberToObject(item, "used_entries", p->used_entries);
+        cJSON_AddNumberToObject(item, "free_entries", p->free_entries);
+        cJSON_AddNumberToObject(item, "total_entries", p->total_entries);
+        cJSON_AddNumberToObject(item, "namespace_count", p->namespace_count);
+        cJSON_AddNumberToObject(item, "last_error", p->last_error);
+        cJSON_AddItemToArray(partitions, item);
+    }
     cJSON *tasks = cJSON_AddArrayToObject(root, "tasks");
     for (size_t i = 0; i < task_count; ++i) {
         diagnostics_task_stat_t stat;
@@ -377,6 +407,26 @@ static void restart_task(void *arg)
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(1500));
     esp_restart();
+}
+
+static esp_err_t factory_reset_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    cJSON *confirm = j ? cJSON_GetObjectItem(j, "confirm") : NULL;
+    bool confirmed = cJSON_IsString(confirm) &&
+                     strcmp(confirm->valuestring, "ERASE_ALL_USER_DATA") == 0;
+    cJSON_Delete(j);
+    if (!confirmed) {
+        return send_json_error(req, "400 Bad Request",
+                               "Type ERASE_ALL_USER_DATA to explicitly confirm factory reset");
+    }
+    esp_err_t err = storage_manager_factory_reset("ERASE_ALL_USER_DATA");
+    if (err != ESP_OK) return send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true,\"destructive\":true}");
+    xTaskCreate(restart_task, "factory_restart", 2048, NULL, 3, NULL);
+    return ESP_OK;
 }
 
 static esp_err_t provision_post(httpd_req_t *req)
@@ -670,13 +720,14 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 20;
+    cfg.max_uri_handlers = 21;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
         {.uri = "/", .method = HTTP_GET, .handler = index_get},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get},
         {.uri = "/api/diagnostics/resources", .method = HTTP_GET, .handler = resources_get},
+        {.uri = "/api/storage/factory-reset", .method = HTTP_POST, .handler = factory_reset_post},
         {.uri = "/api/provision", .method = HTTP_POST, .handler = provision_post},
         {.uri = "/api/wifi/reconfigure", .method = HTTP_POST, .handler = wifi_reconfigure_post},
         {.uri = "/api/time/ntp", .method = HTTP_POST, .handler = time_ntp_post},

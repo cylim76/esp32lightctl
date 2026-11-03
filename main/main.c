@@ -1,8 +1,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "nvs_flash.h"
 #include "diagnostics.h"
+#include "storage_manager.h"
 #include "stage_config.h"
 #if LIGHTGW_HAS_CONTROL
 #include "device_control.h"
@@ -29,12 +29,11 @@ void app_main(void)
     ESP_LOGI(TAG, "Firmware %s, Stage %d, reset=%s, free_heap=%u, min_free_heap=%u",
              LIGHTGW_VERSION, LIGHTGW_STAGE, diagnostics_reset_reason(),
              (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size());
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+    esp_err_t err = storage_manager_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Storage degraded: %s. No data erased; automatic scheduling may be disabled.",
+                 esp_err_to_name(err));
     }
-    ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(wifi_manager_start());
     ESP_ERROR_CHECK(time_manager_start());
@@ -42,7 +41,11 @@ void app_main(void)
     ESP_ERROR_CHECK(zigbee_manager_start());
 #endif
 #if LIGHTGW_HAS_IR
-    ESP_ERROR_CHECK(ir_manager_start());
+    err = ir_manager_start();
+    if (err != ESP_OK) {
+        diagnostics_set_error(TAG, "IR subsystem disabled: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "IR subsystem disabled: %s; lighting and Web remain available", esp_err_to_name(err));
+    }
 #endif
 #if LIGHTGW_HAS_CONTROL
     ESP_ERROR_CHECK(device_control_start());

@@ -7,7 +7,7 @@
 - ZBOSS `esp-zboss-lib 1.6.4`
 - Espressif mDNS `1.14.1`
 - 目标：`esp32c6`，Flash：8 MB
-- 当前源码固件版本：`0.8.0-stageN`；原 Stage 1～5 已发布镜像保持不变
+- 当前源码固件版本：`0.9.0-stageN`；原 Stage 1～5 已发布镜像保持不变
 
 五个 Stage 使用同一套源码。`LIGHTGW_STAGE` 是 CMake cache 变量，每个 Stage 使用独立的 `build-stageN` 目录和该目录内独立生成的 `sdkconfig`。Stage 5 叠加 `sdkconfig.stage5` 并使用 `partitions_stage5.csv`；Stage 1～4 继续使用原 `partitions.csv`。
 
@@ -122,3 +122,17 @@ QEMU 命令需要先安装 ESP-IDF 可选的 `qemu-riscv32` 工具，然后使�
 | 5 | PASS (BUILD ONLY) | 1,483,408 B (`0x16a290`) | 1,343,568 B | 212,822 B | `d71d044c5f0973864473249e5336ec9788996835986bd8378b860612cc599ed5` |
 
 这些数字只证明静态构建；Free Heap、Largest Free Block、任务栈、TLS/MQTT、配对和红外学习峰值尚未在目标板测量。
+
+## 2026-11-03 存储安全与质量回归（0.9.0）
+
+使用 ESP-IDF 5.5.1 在 `build-quality-stage1`～`build-quality-stage5` 中真实执行五次 `idf.py build`，并对五个 Stage 执行 `idf.py size` 与 `idf.py size-components`。全部命令退出码为 0；未覆盖 `firmware/` 中既有发布镜像。
+
+| Stage | 结果 | 应用 `.bin` | Flash (`idf.py size`) | 静态 DIRAM | SHA-256 |
+|---|---|---:|---:|---:|---|
+| 1 | PASS (BUILD ONLY) | 1,076,416 B | 949,114 B | 160,356 B | `ccc64d3b6ad5963ce2d9756a79a50a2261fb7a4658e45b98fb28dafc6627b866` |
+| 2 | PASS (BUILD ONLY) | 1,437,856 B | 1,302,316 B | 192,386 B | `bfcadad4dda22648f64e094bbb2c7d6c4b61941aae03994f0d41498d2f6aa2cc` |
+| 3 | PASS (BUILD ONLY) | 1,441,232 B | 1,305,682 B | 192,386 B | `dc55fd7f7926ae131b77914b4040d2389c53e58ea525819d61e45db02c773190` |
+| 4 | PASS (BUILD ONLY) | 1,457,392 B | 1,321,844 B | 206,738 B | `3639c525a9d005e1830a96bc115ad9f5f48d37960b0b344ffd7a8a83e42d9d7a` |
+| 5 | PASS (BUILD ONLY) | 1,493,872 B | 1,354,022 B | 215,902 B | `35d32c750c6965861c3ed2ecb3ad4bce027784c716f58cdd46d5e6b36659ec8e` |
+
+ESP32-C6 C 测试镜像同时真实构建通过；最终大小和 SHA-256 见 [QUALITY_TEST_REPORT.md](QUALITY_TEST_REPORT.md)。同一生产 C 逻辑在 Espressif ESP32-C3 QEMU 中实际执行 15 项全部 PASS；这是模拟器软件结果，不是 C6 硬件测试通过。

@@ -2,7 +2,7 @@
 
 ## 结论边界
 
-本报告记录的是 `ESP-IDF 5.5.1` 对 `0.8.0-stageN` 的真实构建结果，以及已经加入固件的运行监控能力。`idf.py size` 的静态占用不能证明设备在 Wi-Fi、Zigbee、RMT、I2C 或未来 RainMaker 并发运行时具有足够余量。所有运行时峰值和长期稳定性项目在开发板实测前均为 `NOT TESTED`。
+本报告记录的是 `ESP-IDF 5.5.1` 对 `0.9.0-stageN` 的最新真实构建结果，并保留早期版本的对照数据。`idf.py size` 的静态占用不能证明设备在 Wi-Fi、Zigbee、RMT、I2C 或未来 RainMaker 并发运行时具有足够余量。所有运行时峰值和长期稳定性项目在开发板实测前均为 `NOT TESTED`。
 
 ESP32-C6-DevKitC-1-N8 标称有 512 KB HP SRAM，但链接器本次报告可参与 DIRAM 统计的区域为 452,112 B。下表不能用 512 KB 直接减去静态占用来推断运行时 Free Heap；Wi-Fi/Zigbee 驱动、任务栈、TLS、网络缓冲和碎片化都需要上板测量。
 
@@ -93,4 +93,18 @@ Stage 6 合入条件：在独立 `build-stage6` 中重新执行 `build`、`size`
 | ir_data | `0x671000` | `0x010000` (64 KB) | 两组红外码 |
 | 预留 | `0x681000`～`0x7FFFFF` | `0x17F000` | RainMaker/传感器/迁移余量，待设计 |
 
-Stage 5 当前 BIN 为 1,483,408 B，能放入候选 3 MB OTA 槽；这不能证明加入 RainMaker 后仍满足空间、签名、回滚和迁移要求。启用该表前必须确认最终 Stage 6 镜像、bootloader OTA 配置、加密/签名开销，并设计从现行 factory-only 地址迁移 NVS、Zigbee 与 IR 数据的可恢复流程。
+Stage 5 的 0.8.0 基线 BIN 为 1,483,408 B；0.9.0 复测为 1,493,872 B，均能放入候选 3 MB OTA 槽。这不能证明加入 RainMaker 后仍满足空间、签名、回滚和迁移要求。启用该表前必须确认最终 Stage 6 镜像、bootloader OTA 配置、加密/签名开销，并设计从现行 factory-only 地址迁移 NVS、Zigbee 与 IR 数据的可恢复流程。
+
+## 0.9.0 存储安全版本静态资源复测
+
+2026-11-03 对最终存储安全源码重新执行 `idf.py size` 和 `size-components`，两类命令在 Stage 1～5 均退出 0：
+
+| Stage | Flash Code | 静态 DIRAM | `.data` | `.bss` | DIRAM 剩余（链接估算） |
+|---|---:|---:|---:|---:|---:|
+| 1 | 949,114 B | 160,356 B | 14,736 B | 33,160 B | 291,756 B |
+| 2 | 1,302,316 B | 192,386 B | 15,320 B | 56,952 B | 259,726 B |
+| 3 | 1,305,682 B | 192,386 B | 15,320 B | 56,952 B | 259,726 B |
+| 4 | 1,321,844 B | 206,738 B | 15,320 B | 71,304 B | 245,374 B |
+| 5 | 1,354,022 B | 215,902 B | 16,000 B | 76,160 B | 236,210 B |
+
+`runtime_nvs` 是 Flash 分区，不占用上述静态 DIRAM；调度持久化缓存和 RAM 日志已经计入 Stage 4/5 的 `.bss`。这些数字仍不能证明 Wi-Fi、Zigbee、RMT、RTC 及未来 RainMaker 同时运行时的动态堆余量；实机峰值项目保持 `NOT TESTED`。

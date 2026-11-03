@@ -43,7 +43,7 @@
 | HW-408 | 5 | 1W 模块供电压降及 ESP32 复位 | NOT TESTED | — | 不假设板载5V可提供350mA |
 | HW-409 | 5 | 红外功能72小时稳定性 | NOT TESTED | — | 等待硬件 |
 | HW-410 | 5 | 空调1/空调2/共享组各最多8条独立定时 | NOT TESTED | — | 只用已确认 OFF 码，状态不声称已关闭 |
-| HW-411 | 4/5 | Phase A C 测试固件 8 项在目标板执行 | NOT TESTED | — | 测试镜像已 BUILD PASS，尚未烧录运行 |
+| HW-411 | 4/5 | Phase A/存储 C 测试固件 15 项在目标板执行 | NOT TESTED | — | C6 测试镜像已 BUILD PASS；QEMU 15 项 SIMULATED PASS（含 NO_MEM 注入），尚未烧录 C6 |
 | HW-412 | 4 | 多 Zigbee 设备/端点状态隔离与短地址复用 | NOT TESTED | — | 旧 OFF 不得串设备或确认新命令 |
 | HW-413 | 4 | 缓存过期、主动回读超时及恢复后新反馈 | NOT TESTED | — | 页面应为 UNKNOWN/FAILED，收到新反馈后再确认 |
 | HW-414 | 5 | IR 入队、RMT 完成、失败和结果超时状态链 | NOT TESTED | — | SENT 仍不代表空调已关闭 |
@@ -55,5 +55,9 @@
 | HW-420 | 6 | RainMaker TLS 握手、MQTT 首连及重连内存峰值 | NOT TESTED | — | Stage 6 尚未实现 |
 | HW-421 | 1～5 | 各 Stage 72 小时/7 天 Heap、Largest Block、最低 HWM 趋势 | NOT TESTED | — | 各自独立记录，不用编译结果代替 |
 | HW-422 | 6 | 双 OTA 升级、回滚及 NVS/Zigbee/IR 数据迁移 | NOT TESTED | — | 当前仅有候选分区规划，尚未启用 |
+| HW-423 | 1～5 | 主 NVS/runtime NVS 空间不足且不自动擦除 | NOT TESTED | — | 页面 stats、串口错误、配置保留均需实测 |
+| HW-424 | 4/5 | 单项执行状态写入时断电和重启恢复 | NOT TESTED | — | QEMU 故障注入 PASS；真实 Flash 断电测试待执行 |
+| HW-425 | 4/5 | 56 条任务、失败重试和 7 天日志/NVS 增长 | NOT TESTED | — | 验证无持久调试日志、无无限重试、记录 NVS entries |
+| HW-426 | 1～5 | 用户确认恢复出厂设置及部分擦除失败处理 | NOT TESTED | — | 仅使用测试设备；确认文本必须精确匹配 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。

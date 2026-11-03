@@ -13,12 +13,15 @@
 #include "freertos/task.h"
 #include "nvs.h"
 #include "stage_config.h"
+#include "storage_manager.h"
 #include "zigbee_state_cache.h"
 #include "zcl/esp_zigbee_zcl_command.h"
 
 static const char *TAG = "zigbee";
 static SemaphoreHandle_t s_devices_lock;
 static zb_device_snapshot_t s_devices[APP_MAX_ZIGBEE_DEVICES];
+static zb_device_snapshot_t s_persisted_devices[APP_MAX_ZIGBEE_DEVICES];
+static bool s_device_storage_healthy = true;
 static bool s_network_ready;
 static int64_t s_pairing_until_us;
 static zb_state_cache_t s_state_cache;
@@ -37,26 +40,49 @@ typedef struct {
 
 static void save_devices(void)
 {
+    if (!s_device_storage_healthy) {
+        storage_manager_record_write("nvs", "devices_v2_write_blocked", ESP_ERR_INVALID_STATE, true);
+        return;
+    }
+    if (memcmp(s_devices, s_persisted_devices, sizeof(s_devices)) == 0) {
+        storage_manager_record_write("nvs", "devices_v2", ESP_OK, false);
+        return;
+    }
     nvs_handle_t nvs;
-    if (nvs_open("zb_app", NVS_READWRITE, &nvs) == ESP_OK) {
-        nvs_set_blob(nvs, "devices_v2", s_devices, sizeof(s_devices));
-        nvs_commit(nvs);
+    esp_err_t err = nvs_open("zb_app", NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(nvs, "devices_v2", s_devices, sizeof(s_devices));
+        if (err == ESP_OK) err = nvs_commit(nvs);
         nvs_close(nvs);
     }
+    storage_manager_record_write("nvs", "devices_v2", err, true);
+    if (err == ESP_OK) memcpy(s_persisted_devices, s_devices, sizeof(s_devices));
 }
 
 static void load_devices(void)
 {
+    s_device_storage_healthy = true;
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
         s_devices[i].state[0] = s_devices[i].state[1] = s_devices[i].state[2] = ZB_CHANNEL_UNKNOWN;
     }
     nvs_handle_t nvs;
     size_t len = sizeof(s_devices);
-    if (nvs_open("zb_app", NVS_READONLY, &nvs) == ESP_OK) {
-        if (nvs_get_blob(nvs, "devices_v2", s_devices, &len) != ESP_OK || len != sizeof(s_devices)) {
+    esp_err_t open_err = nvs_open("zb_app", NVS_READONLY, &nvs);
+    if (open_err == ESP_OK) {
+        esp_err_t read_err = nvs_get_blob(nvs, "devices_v2", s_devices, &len);
+        if (read_err != ESP_OK && read_err != ESP_ERR_NVS_NOT_FOUND) {
             memset(s_devices, 0, sizeof(s_devices));
+            s_device_storage_healthy = false;
+            storage_manager_record_corruption("nvs", "devices_v2 unreadable; automatic overwrite blocked");
+        } else if (read_err == ESP_OK && len != sizeof(s_devices)) {
+            memset(s_devices, 0, sizeof(s_devices));
+            s_device_storage_healthy = false;
+            storage_manager_record_corruption("nvs", "devices_v2 size mismatch; automatic overwrite blocked");
         }
         nvs_close(nvs);
+    } else if (open_err != ESP_ERR_NVS_NOT_FOUND) {
+        s_device_storage_healthy = false;
+        storage_manager_record_write("nvs", "devices_v2_open", open_err, true);
     }
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
         if (s_devices[i].used) {
@@ -64,6 +90,7 @@ static void load_devices(void)
             s_devices[i].state[0] = s_devices[i].state[1] = s_devices[i].state[2] = ZB_CHANNEL_UNKNOWN;
         }
     }
+    memcpy(s_persisted_devices, s_devices, sizeof(s_devices));
 }
 
 static int find_device_by_short(uint16_t short_addr)

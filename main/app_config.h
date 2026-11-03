@@ -19,6 +19,7 @@
 #define APP_AUTH_HASH_LEN             32
 
 #define APP_NVS_NAMESPACE             "gateway"
+#define APP_RUNTIME_STORAGE_PARTITION "runtime_nvs"
 #define APP_TIMEZONE_DEFAULT          "CST-8"
 
 /* DS3231 is optional on every Stage. RTC stores UTC; application uses CST-8. */

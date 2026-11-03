@@ -8,13 +8,20 @@
 #include "esp_crc.h"
 #include "esp_log.h"
 #include "nvs.h"
-#include "nvs_flash.h"
+#include "storage_manager.h"
 
 #define IR_SCHEDULE_MAGIC 0x49525335UL
 #define IR_SCHEDULE_VERSION 1
 
 static const char *TAG = "ir_storage";
 static bool s_exists[IR_CODE_SLOT_COUNT];
+
+static esp_err_t open_ir_rw(nvs_handle_t *nvs, const char *operation)
+{
+    esp_err_t err = nvs_open_from_partition(APP_IR_STORAGE_PARTITION, "ir", NVS_READWRITE, nvs);
+    if (err != ESP_OK) storage_manager_record_write(APP_IR_STORAGE_PARTITION, operation, err, true);
+    return err;
+}
 
 const char *ir_protocol_name(ir_protocol_t protocol)
 {
@@ -47,11 +54,7 @@ static const char *slot_key(uint8_t slot)
 
 esp_err_t ir_storage_init(void)
 {
-    esp_err_t err = nvs_flash_init_partition(APP_IR_STORAGE_PARTITION);
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_RETURN_ON_ERROR(nvs_flash_erase_partition(APP_IR_STORAGE_PARTITION), TAG, "erase IR NVS");
-        err = nvs_flash_init_partition(APP_IR_STORAGE_PARTITION);
-    }
+    esp_err_t err = storage_manager_init_optional_partition(APP_IR_STORAGE_PARTITION);
     ESP_RETURN_ON_ERROR(err, TAG, "init IR NVS");
     memset(s_exists, 0, sizeof(s_exists));
     ir_code_t *code = malloc(sizeof(*code));
@@ -86,11 +89,21 @@ esp_err_t ir_storage_save_code(uint8_t slot, const ir_code_t *source)
     code.version = IR_CODE_VERSION;
     code.crc32 = ir_code_crc(&code);
     if (!ir_code_valid(&code)) return ESP_ERR_INVALID_ARG;
+    ir_code_t *existing = malloc(sizeof(*existing));
+    if (!existing) return ESP_ERR_NO_MEM;
+    bool unchanged = ir_storage_load_code(slot, existing) == ESP_OK &&
+                     memcmp(existing, &code, sizeof(code)) == 0;
+    free(existing);
+    if (unchanged) {
+        storage_manager_record_write(APP_IR_STORAGE_PARTITION, slot_key(slot), ESP_OK, false);
+        return ESP_OK;
+    }
     nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open_from_partition(APP_IR_STORAGE_PARTITION, "ir", NVS_READWRITE, &nvs), TAG, "open IR NVS");
+    ESP_RETURN_ON_ERROR(open_ir_rw(&nvs, "code_open"), TAG, "open IR NVS");
     esp_err_t err = nvs_set_blob(nvs, slot_key(slot), &code, sizeof(code));
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
+    storage_manager_record_write(APP_IR_STORAGE_PARTITION, slot_key(slot), err, true);
     if (err == ESP_OK) {
         s_exists[slot] = true;
         ESP_LOGI(TAG, "Saved IR slot %u: durations=%u protocol=%s crc=0x%08lx", slot + 1,
@@ -138,10 +151,16 @@ esp_err_t ir_storage_save_schedule(const ir_schedule_t *source)
     ir_schedule_t schedule = *source;
     schedule.magic = IR_SCHEDULE_MAGIC;
     schedule.version = IR_SCHEDULE_VERSION;
+    ir_schedule_t existing;
+    if (ir_storage_load_schedule(&existing) == ESP_OK && memcmp(&existing, &schedule, sizeof(schedule)) == 0) {
+        storage_manager_record_write(APP_IR_STORAGE_PARTITION, "schedule", ESP_OK, false);
+        return ESP_OK;
+    }
     nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open_from_partition(APP_IR_STORAGE_PARTITION, "ir", NVS_READWRITE, &nvs), TAG, "open IR NVS");
+    ESP_RETURN_ON_ERROR(open_ir_rw(&nvs, "schedule_open"), TAG, "open IR NVS");
     esp_err_t err = nvs_set_blob(nvs, "schedule", &schedule, sizeof(schedule));
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
+    storage_manager_record_write(APP_IR_STORAGE_PARTITION, "schedule", err, true);
     return err;
 }

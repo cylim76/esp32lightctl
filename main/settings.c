@@ -10,10 +10,19 @@
 #include "mbedtls/md.h"
 #include "mbedtls/pkcs5.h"
 #include "nvs.h"
+#include "storage_manager.h"
 
 static const char *TAG = "settings";
 static app_settings_t s_cfg;
 static SemaphoreHandle_t s_cfg_lock;
+static bool s_force_schedule_write;
+
+static esp_err_t open_settings_rw(nvs_handle_t *nvs, const char *operation)
+{
+    esp_err_t err = nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, nvs);
+    if (err != ESP_OK) storage_manager_record_write("nvs", operation, err, true);
+    return err;
+}
 
 const char *settings_schedule_target_name(schedule_target_t target)
 {
@@ -51,7 +60,11 @@ static bool constant_time_equal(const uint8_t *a, const uint8_t *b, size_t len)
 static void load_str(nvs_handle_t nvs, const char *key, char *out, size_t cap)
 {
     size_t len = cap;
-    if (nvs_get_str(nvs, key, out, &len) != ESP_OK) out[0] = '\0';
+    esp_err_t err = nvs_get_str(nvs, key, out, &len);
+    if (err != ESP_OK) {
+        out[0] = '\0';
+        if (err != ESP_ERR_NVS_NOT_FOUND) storage_manager_record_corruption("nvs", key);
+    }
 }
 
 static bool valid_schedule_list(const app_schedule_entry_t *entries, size_t count)
@@ -82,6 +95,11 @@ esp_err_t settings_init(void)
     strlcpy(s_cfg.admin_user, "admin", sizeof(s_cfg.admin_user));
     strlcpy(s_cfg.device_name, "lightgw", sizeof(s_cfg.device_name));
     strlcpy(s_cfg.timezone, APP_TIMEZONE_DEFAULT, sizeof(s_cfg.timezone));
+
+    if (!storage_manager_primary_ready()) {
+        ESP_LOGE(TAG, "Primary NVS unavailable; using volatile defaults without erasing stored data");
+        return ESP_OK;
+    }
 
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(APP_NVS_NAMESPACE, NVS_READONLY, &nvs);
@@ -116,6 +134,7 @@ esp_err_t settings_init(void)
             if (s_cfg.schedule_count > APP_MAX_SCHEDULES) s_cfg.schedule_count = APP_MAX_SCHEDULES;
             if (!valid_schedule_list(s_cfg.schedules, s_cfg.schedule_count)) {
                 ESP_LOGW(TAG, "Ignoring invalid saved schedule list");
+                storage_manager_record_corruption("nvs", "sched_list validation failed");
                 memset(s_cfg.schedules, 0, sizeof(s_cfg.schedules));
                 s_cfg.schedule_count = 0;
             }
@@ -159,17 +178,24 @@ esp_err_t settings_init(void)
     }
     nvs_close(nvs);
     if (migrated_schedules) {
+        s_force_schedule_write = true;
         err = settings_save_schedules(s_cfg.schedules, s_cfg.schedule_count, APP_TIMEZONE_DEFAULT);
+        s_force_schedule_write = false;
         if (err != ESP_OK) ESP_LOGE(TAG, "Persisting migrated schedules failed: %s", esp_err_to_name(err));
-        return err;
+        /* Keep the valid legacy data in RAM and retry migration next boot; never erase it. */
+        return ESP_OK;
     }
     return ESP_OK;
 }
 
 esp_err_t settings_clear_wifi(void)
 {
+    if (!s_cfg.wifi_configured && !s_cfg.wifi_ssid[0] && !s_cfg.wifi_password[0]) {
+        storage_manager_record_write("nvs", "wifi", ESP_OK, false);
+        return ESP_OK;
+    }
     nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
+    ESP_RETURN_ON_ERROR(open_settings_rw(&nvs, "wifi_clear_open"), TAG, "open NVS");
     esp_err_t err = nvs_erase_key(nvs, "wifi_ssid");
     if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     esp_err_t pass_err = nvs_erase_key(nvs, "wifi_pass");
@@ -177,6 +203,7 @@ esp_err_t settings_clear_wifi(void)
     if (err == ESP_OK) err = pass_err;
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
+    storage_manager_record_write("nvs", "wifi", err, true);
     if (err == ESP_OK) {
         memset(s_cfg.wifi_ssid, 0, sizeof(s_cfg.wifi_ssid));
         memset(s_cfg.wifi_password, 0, sizeof(s_cfg.wifi_password));
@@ -188,11 +215,16 @@ esp_err_t settings_clear_wifi(void)
 esp_err_t settings_save_device_name(const char *device_name)
 {
     if (!valid_device_name(device_name)) return ESP_ERR_INVALID_ARG;
+    if (strcmp(s_cfg.device_name, device_name) == 0) {
+        storage_manager_record_write("nvs", "device_name", ESP_OK, false);
+        return ESP_OK;
+    }
     nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
+    ESP_RETURN_ON_ERROR(open_settings_rw(&nvs, "device_name_open"), TAG, "open NVS");
     esp_err_t err = nvs_set_str(nvs, "device_name", device_name);
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
+    storage_manager_record_write("nvs", "device_name", err, true);
     if (err == ESP_OK) strlcpy(s_cfg.device_name, device_name, sizeof(s_cfg.device_name));
     return err;
 }
@@ -210,12 +242,18 @@ void settings_copy(app_settings_t *out)
 esp_err_t settings_save_wifi(const char *ssid, const char *password)
 {
     if (!ssid || !password || ssid[0] == '\0' || strlen(ssid) > 32 || strlen(password) > 64) return ESP_ERR_INVALID_ARG;
+    if (s_cfg.wifi_configured && strcmp(s_cfg.wifi_ssid, ssid) == 0 &&
+        strcmp(s_cfg.wifi_password, password) == 0) {
+        storage_manager_record_write("nvs", "wifi", ESP_OK, false);
+        return ESP_OK;
+    }
     nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
+    ESP_RETURN_ON_ERROR(open_settings_rw(&nvs, "wifi_open"), TAG, "open NVS");
     esp_err_t err = nvs_set_str(nvs, "wifi_ssid", ssid);
     if (err == ESP_OK) err = nvs_set_str(nvs, "wifi_pass", password);
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
+    storage_manager_record_write("nvs", "wifi", err, true);
     if (err == ESP_OK) {
         strlcpy(s_cfg.wifi_ssid, ssid, sizeof(s_cfg.wifi_ssid));
         strlcpy(s_cfg.wifi_password, password, sizeof(s_cfg.wifi_password));
@@ -229,16 +267,22 @@ esp_err_t settings_save_admin(const char *user, const char *password)
     if (!user || !password || strlen(user) < 1 || strlen(user) > 32 || strlen(password) < 12 || strlen(password) > 64) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_cfg.auth_configured && strcmp(s_cfg.admin_user, user) == 0 &&
+        settings_verify_admin(user, password)) {
+        storage_manager_record_write("nvs", "admin", ESP_OK, false);
+        return ESP_OK;
+    }
     uint8_t salt[APP_AUTH_SALT_LEN], hash[APP_AUTH_HASH_LEN];
     esp_fill_random(salt, sizeof(salt));
     ESP_RETURN_ON_ERROR(derive_password(password, salt, hash), TAG, "password derivation");
     nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
+    ESP_RETURN_ON_ERROR(open_settings_rw(&nvs, "admin_open"), TAG, "open NVS");
     esp_err_t err = nvs_set_str(nvs, "admin_user", user);
     if (err == ESP_OK) err = nvs_set_blob(nvs, "auth_salt", salt, sizeof(salt));
     if (err == ESP_OK) err = nvs_set_blob(nvs, "auth_hash", hash, sizeof(hash));
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
+    storage_manager_record_write("nvs", "admin", err, true);
     if (err == ESP_OK) {
         strlcpy(s_cfg.admin_user, user, sizeof(s_cfg.admin_user));
         memcpy(s_cfg.auth_salt, salt, sizeof(salt));
@@ -261,19 +305,28 @@ esp_err_t settings_save_schedules(const app_schedule_entry_t *entries, size_t co
     if ((!entries && count != 0) || count > APP_MAX_SCHEDULES || !timezone ||
         strcmp(timezone, APP_TIMEZONE_DEFAULT) != 0) return ESP_ERR_INVALID_ARG;
     if (!valid_schedule_list(entries, count)) return ESP_ERR_INVALID_ARG;
+    app_schedule_entry_t snapshot[APP_MAX_SCHEDULES] = {0};
+    if (count) memcpy(snapshot, entries, count * sizeof(*entries));
+    bool unchanged = !s_force_schedule_write && s_cfg.schedule_count == count && strcmp(s_cfg.timezone, timezone) == 0 &&
+                     (!count || memcmp(s_cfg.schedules, entries, count * sizeof(*entries)) == 0);
+    if (unchanged) {
+        storage_manager_record_write("nvs", "schedules", ESP_OK, false);
+        return ESP_OK;
+    }
     nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(nvs_open(APP_NVS_NAMESPACE, NVS_READWRITE, &nvs), TAG, "open NVS");
-    esp_err_t err = count ? nvs_set_blob(nvs, "sched_list", entries, count * sizeof(*entries)) :
+    ESP_RETURN_ON_ERROR(open_settings_rw(&nvs, "schedules_open"), TAG, "open NVS");
+    esp_err_t err = count ? nvs_set_blob(nvs, "sched_list", snapshot, count * sizeof(*snapshot)) :
                             nvs_erase_key(nvs, "sched_list");
     if (!count && err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     if (err == ESP_OK) err = nvs_set_u8(nvs, "sched_ver", 3);
     if (err == ESP_OK) err = nvs_set_str(nvs, "timezone", timezone);
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
+    storage_manager_record_write("nvs", "schedules", err, true);
     if (err == ESP_OK) {
         xSemaphoreTake(s_cfg_lock, portMAX_DELAY);
         memset(s_cfg.schedules, 0, sizeof(s_cfg.schedules));
-        if (count) memcpy(s_cfg.schedules, entries, count * sizeof(*entries));
+        if (count) memcpy(s_cfg.schedules, snapshot, count * sizeof(*snapshot));
         s_cfg.schedule_count = count;
         strlcpy(s_cfg.timezone, timezone, sizeof(s_cfg.timezone));
         xSemaphoreGive(s_cfg_lock);

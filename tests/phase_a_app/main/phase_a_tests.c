@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "device_state.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "nvs.h"
+#include "scheduler_persistence.h"
 #include "zigbee_state_cache.h"
 
 static const uint8_t IEEE_A[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -9,6 +13,58 @@ static const uint8_t IEEE_B[8] = {8, 7, 6, 5, 4, 3, 2, 1};
 static unsigned s_passed;
 /* The production cache is deliberately large; keep it in BSS, not app_main's stack. */
 static zb_state_cache_t cache;
+
+typedef struct {
+    scheduler_execution_record_t records[APP_MAX_SCHEDULES];
+    bool present[APP_MAX_SCHEDULES];
+    esp_err_t next_write_error;
+    unsigned reads;
+    unsigned writes;
+} mock_scheduler_nvs_t;
+
+static mock_scheduler_nvs_t mock_nvs;
+/* The production store has 56 cached records; keep test instances in BSS so
+   fault tests cannot corrupt the relatively small ESP-IDF main-task stack. */
+static scheduler_store_t store_a;
+static scheduler_store_t store_b;
+
+static esp_err_t mock_scheduler_read(void *ctx, unsigned index, void *data, size_t *size)
+{
+    mock_scheduler_nvs_t *mock = ctx;
+    mock->reads++;
+    if (index >= APP_MAX_SCHEDULES || !mock->present[index]) return ESP_ERR_NVS_NOT_FOUND;
+    if (!size || *size < sizeof(mock->records[index])) return ESP_ERR_NVS_INVALID_LENGTH;
+    memcpy(data, &mock->records[index], sizeof(mock->records[index]));
+    *size = sizeof(mock->records[index]);
+    return ESP_OK;
+}
+
+static esp_err_t mock_scheduler_write(void *ctx, unsigned index, const void *data, size_t size)
+{
+    mock_scheduler_nvs_t *mock = ctx;
+    mock->writes++;
+    if (mock->next_write_error != ESP_OK) {
+        esp_err_t err = mock->next_write_error;
+        mock->next_write_error = ESP_OK;
+        return err;
+    }
+    if (index >= APP_MAX_SCHEDULES || size != sizeof(mock->records[index])) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    memcpy(&mock->records[index], data, size);
+    mock->present[index] = true;
+    return ESP_OK;
+}
+
+static scheduler_store_backend_t mock_backend(void)
+{
+    scheduler_store_backend_t backend = {
+        .ctx = &mock_nvs,
+        .read = mock_scheduler_read,
+        .write = mock_scheduler_write,
+    };
+    return backend;
+}
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -138,6 +194,134 @@ static void test_command_ring_rejects_inflight_overwrite(void)
     CHECK(device_state_create(&store, 0, 0x1111, 0, false, "reused", 7) != 0);
 }
 
+static scheduler_execution_state_t execution_state(unsigned index)
+{
+    scheduler_execution_state_t state = {
+        .signature = 0x1000U + index,
+        .date_key = 20261103U,
+        .due_epoch = (time_t)(1793680000 + index * 60),
+        .next_action_epoch = (time_t)(1793680030 + index * 60),
+        .command_id = 200U + index,
+        .next_retry_index = (uint8_t)(index % 4),
+        .attempt_count = (uint8_t)(index % 3),
+        .finished = (uint8_t)(index & 1U),
+    };
+    return state;
+}
+
+static bool execution_states_equal(const scheduler_execution_state_t *a,
+                                   const scheduler_execution_state_t *b)
+{
+    return a->signature == b->signature && a->date_key == b->date_key &&
+           a->due_epoch == b->due_epoch && a->next_action_epoch == b->next_action_epoch &&
+           a->command_id == b->command_id && a->next_retry_index == b->next_retry_index &&
+           a->attempt_count == b->attempt_count && a->finished == b->finished;
+}
+
+static void test_scheduler_unchanged_write_is_skipped(void)
+{
+    memset(&mock_nvs, 0, sizeof(mock_nvs));
+    scheduler_store_backend_t backend = mock_backend();
+    scheduler_store_init(&store_a, &backend);
+    scheduler_execution_state_t state = execution_state(3);
+    bool changed = false;
+    CHECK(scheduler_store_save(&store_a, 3, &state, &changed) == ESP_OK && changed);
+    CHECK(scheduler_store_save(&store_a, 3, &state, &changed) == ESP_OK && !changed);
+    CHECK(mock_nvs.writes == 1 && store_a.writes == 1 && store_a.skipped == 1);
+}
+
+static void test_scheduler_nvs_full_keeps_last_committed_state(void)
+{
+    memset(&mock_nvs, 0, sizeof(mock_nvs));
+    scheduler_store_backend_t backend = mock_backend();
+    scheduler_store_init(&store_a, &backend);
+    scheduler_execution_state_t before = execution_state(1);
+    scheduler_execution_state_t after = before;
+    after.attempt_count++;
+    CHECK(scheduler_store_save(&store_a, 1, &before, NULL) == ESP_OK);
+    mock_nvs.next_write_error = ESP_ERR_NVS_NOT_ENOUGH_SPACE;
+    CHECK(scheduler_store_save(&store_a, 1, &after, NULL) == ESP_ERR_NVS_NOT_ENOUGH_SPACE);
+    scheduler_store_init(&store_b, &backend);
+    scheduler_execution_state_t loaded = {0};
+    CHECK(scheduler_store_load(&store_b, 1, &loaded) == ESP_OK);
+    CHECK(execution_states_equal(&loaded, &before) && store_a.failures == 1);
+}
+
+static void test_scheduler_interrupted_write_recovery(void)
+{
+    memset(&mock_nvs, 0, sizeof(mock_nvs));
+    scheduler_store_backend_t backend = mock_backend();
+    scheduler_store_init(&store_a, &backend);
+    scheduler_execution_state_t before = execution_state(2);
+    scheduler_execution_state_t after = before;
+    after.finished = 1;
+    CHECK(scheduler_store_save(&store_a, 2, &before, NULL) == ESP_OK);
+    mock_nvs.next_write_error = ESP_FAIL;
+    CHECK(scheduler_store_save(&store_a, 2, &after, NULL) == ESP_FAIL);
+    scheduler_store_init(&store_b, &backend);
+    scheduler_execution_state_t loaded = {0};
+    CHECK(scheduler_store_load(&store_b, 2, &loaded) == ESP_OK);
+    CHECK(execution_states_equal(&loaded, &before));
+}
+
+static void test_scheduler_backend_no_mem_keeps_last_committed_state(void)
+{
+    memset(&mock_nvs, 0, sizeof(mock_nvs));
+    scheduler_store_backend_t backend = mock_backend();
+    scheduler_store_init(&store_a, &backend);
+    scheduler_execution_state_t before = execution_state(5);
+    scheduler_execution_state_t after = before;
+    after.next_retry_index++;
+    CHECK(scheduler_store_save(&store_a, 5, &before, NULL) == ESP_OK);
+    mock_nvs.next_write_error = ESP_ERR_NO_MEM;
+    CHECK(scheduler_store_save(&store_a, 5, &after, NULL) == ESP_ERR_NO_MEM);
+    scheduler_store_init(&store_b, &backend);
+    scheduler_execution_state_t loaded = {0};
+    CHECK(scheduler_store_load(&store_b, 5, &loaded) == ESP_OK);
+    CHECK(execution_states_equal(&loaded, &before) && store_a.failures == 1);
+}
+
+static void test_scheduler_corrupt_record_rejected(void)
+{
+    memset(&mock_nvs, 0, sizeof(mock_nvs));
+    scheduler_store_backend_t backend = mock_backend();
+    scheduler_store_init(&store_a, &backend);
+    scheduler_execution_state_t state = execution_state(4);
+    CHECK(scheduler_store_save(&store_a, 4, &state, NULL) == ESP_OK);
+    mock_nvs.records[4].checksum ^= 0x1U;
+    scheduler_store_init(&store_b, &backend);
+    CHECK(scheduler_store_load(&store_b, 4, &state) == ESP_ERR_INVALID_CRC);
+}
+
+static void test_scheduler_all_56_entries_restart(void)
+{
+    memset(&mock_nvs, 0, sizeof(mock_nvs));
+    scheduler_store_backend_t backend = mock_backend();
+    scheduler_store_init(&store_a, &backend);
+    for (unsigned i = 0; i < APP_MAX_SCHEDULES; ++i) {
+        scheduler_execution_state_t state = execution_state(i);
+        CHECK(scheduler_store_save(&store_a, i, &state, NULL) == ESP_OK);
+    }
+    CHECK(mock_nvs.writes == APP_MAX_SCHEDULES);
+    scheduler_store_init(&store_b, &backend);
+    for (unsigned i = 0; i < APP_MAX_SCHEDULES; ++i) {
+        scheduler_execution_state_t expected = execution_state(i);
+        scheduler_execution_state_t loaded = {0};
+        CHECK(scheduler_store_load(&store_b, i, &loaded) == ESP_OK);
+        CHECK(execution_states_equal(&loaded, &expected));
+    }
+}
+
+static void test_scheduler_high_frequency_identical_updates(void)
+{
+    memset(&mock_nvs, 0, sizeof(mock_nvs));
+    scheduler_store_backend_t backend = mock_backend();
+    scheduler_store_init(&store_a, &backend);
+    scheduler_execution_state_t state = execution_state(0);
+    for (unsigned i = 0; i < 1000; ++i) CHECK(scheduler_store_save(&store_a, 0, &state, NULL) == ESP_OK);
+    CHECK(mock_nvs.writes == 1 && store_a.skipped == 999);
+}
+
 void app_main(void)
 {
     RUN(test_multi_device_isolation);
@@ -148,5 +332,13 @@ void app_main(void)
     RUN(test_short_address_reuse_isolated);
     RUN(test_command_lifecycle);
     RUN(test_command_ring_rejects_inflight_overwrite);
+    RUN(test_scheduler_unchanged_write_is_skipped);
+    RUN(test_scheduler_nvs_full_keeps_last_committed_state);
+    RUN(test_scheduler_interrupted_write_recovery);
+    RUN(test_scheduler_backend_no_mem_keeps_last_committed_state);
+    RUN(test_scheduler_corrupt_record_rejected);
+    RUN(test_scheduler_all_56_entries_restart);
+    RUN(test_scheduler_high_frequency_identical_updates);
     printf("PHASE_A_C_TEST SUMMARY PASS: %u tests\n", s_passed);
+    for (;;) vTaskDelay(portMAX_DELAY);
 }

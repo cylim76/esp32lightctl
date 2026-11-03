@@ -70,12 +70,23 @@
 
 ## Phase A 统一控制专项
 
-- 烧录 `tests/phase_a_app/build2/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY` 的完整串口日志；8 项全部 PASS 才能把 C 测试运行状态从 `NOT TESTED` 改为 PASS。
+- 烧录 `tests/phase_a_app/build-quality-c6/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY PASS: 15 tests` 的完整串口日志；15 项全部 PASS 才能把 C6 目标板测试状态从 `NOT TESTED` 改为 PASS。QEMU PASS 只能记为 `SIMULATED PASS`。
 - 配对两台 Zigbee 设备（或一台设备重新配对并观察短地址变化），验证相同 endpoint 编号的状态不会串到另一 IEEE 设备。
 - 先获得 OFF，再等待超过缓存有效期或制造回读超时；新 OFF 命令不得立即使用旧 OFF 显示 `CONFIRMED`。
 - 回读超时后恢复设备并产生新报告，只有新报告到达后才能 `CONFIRMED`。
 - 连续提交超过队列深度的命令，必须出现有界 `FAILED/queue full`，不得阻塞 HTTP/Zigbee 任务或触发无限重试。
 - 同一分钟配置灯光与空调任务：灯光等待新鲜 Zigbee 确认；IR 必须等待 RMT 完成才是 `SENT`，且空调 actual state 始终为 `UNKNOWN`。
+
+## Flash/NVS 故障专项
+
+1. 先备份可恢复的测试配置，不在生产网络直接制造损坏。
+2. 用故障注入测试验证 `ESP_ERR_NVS_NOT_ENOUGH_SPACE`、一般写失败和提交中断后仍读取最后一次完整记录；QEMU 中对应 C 测试必须全部 PASS。
+3. 真实板分别制造主 NVS 与 `runtime_nvs` 空间不足，确认页面显示分区 stats/错误且串口明确报告；不得出现自动 erase。
+4. 在单项 `exNN` 提交期间切断电源，恢复后只允许有界 OFF 重试，不得无限触发或把旧 OFF 当作本次成功。
+5. 装载旧 `exec_v1`、旧 `log_v1`、v2 `sched_list`，在迁移前、中、后重启。逐项迁移必须可续传，旧数据必须保留；配置迁移失败不得清空用户任务。
+6. 配置 56 条任务并使其同分钟到期，验证各目标独立、最大重试有界、日志固定为 RAM 最近 8 条，运行 7 天后 NVS 用量不因普通日志线性增长。
+7. 注入设备表 CRC/长度错误，确认自动覆盖被阻止；只有管理员明确执行恢复出厂设置并输入 `ERASE_ALL_USER_DATA` 时才允许擦除。
+8. 对内存分配失败、Wi-Fi/Zigbee/RainMaker 掉线、IR 失败、RTC OSF、时间大幅跳变、系统复位分别保存页面、串口、coredump 和固件 SHA-256。尚未实现的 RainMaker 项保持 `NOT AVAILABLE / NOT TESTED`。
 
 ## 安全
 

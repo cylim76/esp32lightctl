@@ -17,6 +17,7 @@
 #include "freertos/event_groups.h"
 #include "mdns.h"
 #include "settings.h"
+#include "storage_manager.h"
 #include "time_manager.h"
 
 #define WIFI_CONNECTED_BIT BIT0
@@ -137,6 +138,8 @@ esp_err_t wifi_manager_start(void)
     if (!s_sta_netif) return ESP_ERR_NO_MEM;
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    /* Recovery AP must remain reachable even if the default NVS partition cannot mount. */
+    init.nvs_enable = storage_manager_primary_ready();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&init), TAG, "Wi-Fi init");
     const esp_timer_create_args_t retry_args = {.callback = retry_timer_cb, .name = "wifi_retry"};
     ESP_RETURN_ON_ERROR(esp_timer_create(&retry_args, &s_retry_timer), TAG, "retry timer");
