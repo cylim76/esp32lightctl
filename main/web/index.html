@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32-C6 照明网关</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--card:#151d34;--muted:#9da9c5;--ok:#38d996;--bad:#ff6b6b;--accent:#69a7ff}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#0b1020,#101931);font:15px system-ui,sans-serif;color:#f3f6ff}
+main{max-width:760px;margin:auto;padding:20px}.card{background:var(--card);border:1px solid #263354;border-radius:16px;padding:18px;margin:14px 0;box-shadow:0 12px 30px #0004}
+h1{font-size:25px;margin:10px 0 4px}h2{font-size:18px;margin:0 0 14px}.muted{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.status{padding:10px;border-radius:10px;background:#0d1428}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad);margin-right:7px}.dot.ok{background:var(--ok)}
+button,input{font:inherit}button{border:0;border-radius:10px;padding:12px 15px;background:var(--accent);color:#071326;font-weight:700;cursor:pointer}button.danger{background:#ff8a8a}button:disabled{opacity:.45}
+input{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;border-radius:9px;background:#0d1428;color:#fff}.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.switches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.switches button[data-on="1"]{background:var(--ok)}
+.device{border-top:1px solid #2b3859;padding-top:14px;margin-top:14px}.days{display:flex;gap:6px;flex-wrap:wrap}.days label{background:#0d1428;padding:8px;border-radius:8px}.days input{width:auto;margin:0 4px 0 0}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);padding:11px 16px;border-radius:10px;background:#253250;display:none;max-width:90%}
+@media(max-width:520px){.grid{grid-template-columns:1fr}.switches{grid-template-columns:1fr}main{padding:12px}}
+</style></head>
+<body><main>
+<h1>ESP32-C6 照明网关</h1><div class="muted">本地独立运行 · Zigbee Coordinator</div>
+
+<section id="provision" class="card" hidden>
+ <h2>首次配置</h2><p>输入办公室 Wi-Fi 和新的管理密码（至少 12 位）。保存后设备会重启并关闭配置热点。</p>
+ <label>Wi-Fi SSID<input id="ssid" maxlength="32"></label>
+ <label>Wi-Fi 密码<input id="wifiPass" type="password" maxlength="64"></label>
+ <label>管理用户名<input id="adminUser" value="admin" maxlength="32"></label>
+ <label>管理密码<input id="adminPass" type="password" minlength="12" maxlength="64"></label>
+ <button onclick="provision()">保存并重启</button>
+</section>
+
+<div id="dashboard" hidden>
+<section class="card"><h2>运行状态</h2><div class="grid">
+ <div class="status"><span id="wifiDot" class="dot"></span>Wi-Fi<br><small id="wifiText" class="muted">—</small></div>
+ <div class="status"><span id="timeDot" class="dot"></span>NTP 时间<br><small id="timeText" class="muted">—</small></div>
+ <div class="status"><span id="zbDot" class="dot"></span>Zigbee 网络<br><small id="zbText" class="muted">—</small></div>
+ <div class="status"><span id="pairDot" class="dot"></span>允许入网<br><small id="pairText" class="muted">已关闭</small></div>
+ </div><div class="row" style="margin-top:14px"><button onclick="pair()">开放配对 180 秒</button><button class="danger" onclick="allOff()">全部关闭</button></div>
+</section>
+
+<section class="card"><h2>Aqara D1 设备</h2><div id="devices" class="muted">尚未发现设备</div></section>
+
+<section class="card"><h2>每天自动关灯</h2>
+ <label><input id="schedEnabled" type="checkbox" style="width:auto"> 启用</label>
+ <div class="row"><label>小时<input id="hour" type="number" min="0" max="23" style="width:90px"></label><label>分钟<input id="minute" type="number" min="0" max="59" style="width:90px"></label></div>
+ <div id="days" class="days"></div>
+ <label>POSIX 时区<input id="timezone" value="CST-8"><small class="muted">中国标准时间使用 CST-8</small></label>
+ <button onclick="saveSchedule()">保存定时</button>
+ <p class="muted">仅在 Wi-Fi 在线且本次已完成 NTP 校时后执行；断网期间跳过，不补发。</p>
+</section></div>
+</main><div id="toast"></div>
+<script>
+const names=['左','中','右'],dayNames=['日','一','二','三','四','五','六'];let firstSchedule=true;
+const $=id=>document.getElementById(id);const toast=(m,bad=false)=>{let e=$('toast');e.textContent=m;e.style.display='block';e.style.background=bad?'#7a3038':'#253250';setTimeout(()=>e.style.display='none',3500)};
+async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});let j;try{j=await r.json()}catch{j={error:await r.text()}}if(!r.ok)throw Error(j.error||r.statusText);return j}
+function dots(id,ok){$(id).classList.toggle('ok',!!ok)}
+function renderDevices(ds){let root=$('devices');if(!ds.length){root.className='muted';root.textContent='尚未发现设备';return}root.className='';root.innerHTML='';ds.forEach(d=>{let box=document.createElement('div');box.className='device';let state=v=>v===1?'开':v===0?'关':'未知';box.innerHTML=`<b>${d.model||'发现中'}</b> <span class="muted">0x${d.short.toString(16).padStart(4,'0')} · ${d.ieee}</span><p class="muted">${d.supported?'QBKG25LM 已验证端点/Cluster': '尚未支持或发现未完成'} · ${d.online?'在线':'重启后待设备上报'} · RSSI ${d.rssi}</p><div class="switches"></div>`;let sw=box.querySelector('.switches');names.forEach((n,i)=>{let b=document.createElement('button');b.textContent=`${n}路：${state(d.states[i])}`;b.dataset.on=d.states[i]===1?'1':'0';b.disabled=!d.supported;b.onclick=()=>setSwitch(d.short,i,d.states[i]!==1);sw.appendChild(b)});root.appendChild(box)})}
+async function refresh(){try{let s=await api('/api/status');$('provision').hidden=!s.provisioning;$('dashboard').hidden=s.provisioning;if(s.provisioning)return;dots('wifiDot',s.wifi_connected);$('wifiText').textContent=s.wifi_connected?s.ip:'未连接';dots('timeDot',s.time_synced);$('timeText').textContent=s.time_synced?'已校时':'未校时';dots('zbDot',s.zigbee_ready);$('zbText').textContent=s.zigbee_ready?`PAN 0x${s.pan_id.toString(16)} · 信道 ${s.zigbee_channel}`:'未就绪';dots('pairDot',s.pairing_remaining>0);$('pairText').textContent=s.pairing_remaining?`剩余 ${s.pairing_remaining} 秒`:'已关闭';renderDevices(s.devices);if(firstSchedule){$('schedEnabled').checked=s.schedule.enabled;$('hour').value=s.schedule.hour;$('minute').value=s.schedule.minute;$('timezone').value=s.schedule.timezone;[...document.querySelectorAll('#days input')].forEach((e,i)=>e.checked=!!(s.schedule.days&(1<<i)));firstSchedule=false}}catch(e){toast(e.message,true)}}
+async function provision(){try{await api('/api/provision',{ssid:$('ssid').value,password:$('wifiPass').value,admin_user:$('adminUser').value,admin_password:$('adminPass').value});toast('已保存，设备正在重启')}catch(e){toast(e.message,true)}}
+async function pair(){try{await api('/api/pair',{seconds:180});toast('配对窗口已开放')}catch(e){toast(e.message,true)}}
+async function setSwitch(short,channel,on){try{await api('/api/switch',{short,channel,on});toast('命令已发送');setTimeout(refresh,800)}catch(e){toast(e.message,true)}}
+async function allOff(){try{await api('/api/all-off',{});toast('全部关闭命令已发送');setTimeout(refresh,800)}catch(e){toast(e.message,true)}}
+async function saveSchedule(){let days=0;[...document.querySelectorAll('#days input')].forEach((e,i)=>{if(e.checked)days|=1<<i});try{await api('/api/schedule',{enabled:$('schedEnabled').checked,hour:+$('hour').value,minute:+$('minute').value,days,timezone:$('timezone').value});toast('定时设置已保存')}catch(e){toast(e.message,true)}}
+dayNames.forEach((n,i)=>{$('days').insertAdjacentHTML('beforeend',`<label><input type="checkbox" data-day="${i}">周${n}</label>`)});refresh();setInterval(refresh,3000);
+</script></body></html>
