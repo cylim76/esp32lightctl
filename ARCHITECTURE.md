@@ -1,5 +1,9 @@
 # 系统架构
 
+## 长期 Core 与扩展边界
+
+Core 固定包含 Wi-Fi、Web、Zigbee/Aqara、LG 红外、DS3231 和本地调度。BH1750、SHT31 与 RainMaker 是三个可删除扩展，分别位于 `extensions/bh1750`、`extensions/sht31` 和 `extensions/rainmaker`；Core 不反向依赖它们。共享 I²C 由 `components/lightgw_i2c_bus` 所有，DS3231 不依赖传感器组件。四种固件和安全边界见 [FIRMWARE_VARIANTS.md](FIRMWARE_VARIANTS.md)，回退见 [ROLLBACK.md](ROLLBACK.md)。
+
 ## 单源码阶段边界
 
 `LIGHTGW_STAGE=1..5` 使用同一套源码和独立构建目录。Stage 1 仅含 Wi-Fi、Web、NVS、RTC/时间；Stage 2 加 Coordinator；Stage 3 加发现诊断；Stage 4 加统一设备控制与调度；Stage 5 再加红外。RTC 硬件是可选项，缺失不会阻止其他模块启动。既有 `firmware/` 发布镜像不由回归构建覆盖。
@@ -7,7 +11,7 @@
 ## Phase A 控制数据流
 
 ```text
-Web / scheduler / future RainMaker
+Web / scheduler / optional RainMaker adapter
               |
               v
        device_control queue

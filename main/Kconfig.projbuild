@@ -1,0 +1,36 @@
+menu "esp32lightctl modular firmware"
+
+choice LIGHTGW_FIRMWARE_VARIANT
+    prompt "Firmware feature variant"
+    default LIGHTGW_VARIANT_CORE
+
+config LIGHTGW_VARIANT_CORE
+    bool "CORE"
+
+config LIGHTGW_VARIANT_CORE_SENSOR
+    bool "CORE_SENSOR"
+
+config LIGHTGW_VARIANT_CORE_CLOUD
+    bool "CORE_CLOUD"
+
+config LIGHTGW_VARIANT_FULL
+    bool "FULL"
+
+endchoice
+
+config LIGHTGW_BH1750_EXTENSION
+    bool
+    default y if LIGHTGW_VARIANT_CORE_SENSOR || LIGHTGW_VARIANT_FULL
+    default n
+
+config LIGHTGW_SHT31_EXTENSION
+    bool
+    default y if LIGHTGW_VARIANT_CORE_SENSOR || LIGHTGW_VARIANT_FULL
+    default n
+
+config LIGHTGW_RAINMAKER_EXTENSION
+    bool
+    default y if LIGHTGW_VARIANT_CORE_CLOUD || LIGHTGW_VARIANT_FULL
+    default n
+
+endmenu

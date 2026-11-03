@@ -136,3 +136,16 @@ QEMU 命令需要先安装 ESP-IDF 可选的 `qemu-riscv32` 工具，然后使�
 | 5 | PASS (BUILD ONLY) | 1,493,872 B | 1,354,022 B | 215,902 B | `35d32c750c6965861c3ed2ecb3ad4bce027784c716f58cdd46d5e6b36659ec8e` |
 
 ESP32-C6 C 测试镜像同时真实构建通过；最终大小和 SHA-256 见 [QUALITY_TEST_REPORT.md](QUALITY_TEST_REPORT.md)。同一生产 C 逻辑在 Espressif ESP32-C3 QEMU 中实际执行 15 项全部 PASS；这是模拟器软件结果，不是 C6 硬件测试通过。
+
+## 2026-11-03 模块化变体回归（0.10.0）
+
+`check-all.bat` 在独立目录对 Stage 1～5 和 CORE、CORE_SENSOR、CORE_CLOUD、FULL 全部执行了真实 `build`、`size`、`size-components`，最终输出 `CHECK_ALL PASS`。四种变体结果如下；Stage 1～5 的最新哈希见 `QUALITY_TEST_REPORT.md`。
+
+| 变体 | 结果 | 应用 `.bin` | Flash | 静态 DIRAM | SHA-256 |
+|---|---|---:|---:|---:|---|
+| CORE | PASS (BUILD ONLY) | 1,494,272 B | 1,354,422 B | 215,918 B | `2a84731adc2fd6999152415e1bd22112fa1292c0c0a0785302b591c980635e57` |
+| CORE_SENSOR | PASS (BUILD ONLY) | 1,495,168 B | 1,355,312 B | 215,918 B | `f5bac787f51dfd64aa91d6ae4ddd867720f1c72b503902d0859ee35cb2147992` |
+| CORE_CLOUD | PASS (BUILD ONLY) | 1,494,800 B | 1,354,956 B | 215,918 B | `019b828c607fb6d6b4bf8513ba53ef01a4028dd6c025253d17b8c35ae855c1c3` |
+| FULL | PASS (BUILD ONLY) | 1,495,552 B | 1,355,696 B | 215,918 B | `36e9f1c50570dafe23e23ae40d28262ea5addb7fc8ae3239ce257c7e616b2e35` |
+
+构建结果只验证模块边界和链接；Sensor 仅完成非阻塞地址探测，RainMaker 仅完成统一控制服务适配边界，均未宣称实验功能或硬件通过。

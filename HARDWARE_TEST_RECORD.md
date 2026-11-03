@@ -59,5 +59,11 @@
 | HW-424 | 4/5 | 单项执行状态写入时断电和重启恢复 | NOT TESTED | — | QEMU 故障注入 PASS；真实 Flash 断电测试待执行 |
 | HW-425 | 4/5 | 56 条任务、失败重试和 7 天日志/NVS 增长 | NOT TESTED | — | 验证无持久调试日志、无无限重试、记录 NVS entries |
 | HW-426 | 1～5 | 用户确认恢复出厂设置及部分擦除失败处理 | NOT TESTED | — | 仅使用测试设备；确认文本必须精确匹配 |
+| HW-427 | 5 | CORE 构建无扩展初始化/任务/专用缓冲 | NOT TESTED | — | 软件构建图已隔离，目标板待验证 |
+| HW-428 | 5 | CORE_SENSOR 缺失 BH1750/SHT31 时 Core 正常启动 | NOT TESTED | — | 缺失只能记录诊断 |
+| HW-429 | 5 | CORE_CLOUD/FULL 云不可用时本地控制与调度正常 | NOT TESTED | — | RainMaker 传输尚未实现 |
+| HW-430 | 5 | FULL→CORE 保留 Wi-Fi/Zigbee/IR/RTC/56 条任务 | NOT TESTED | — | 先按 ROLLBACK.md 完整备份 |
+| HW-431 | 5 | 移除 BH1750/SHT31 后 DS3231 共享 I²C 正常 | NOT TESTED | — | 记录总线和 OSF 日志 |
+| HW-432 | 5 | 8 MiB 备份、变体回退及恢复演练 | NOT TESTED | — | 禁止 erase-flash，校验所有 SHA-256 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。

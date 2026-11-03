@@ -12,6 +12,7 @@ if not defined IDF_PATH (
 
 python tests\static_storage_check.py || exit /b 1
 python tests\test_web_storage_contract.py || exit /b 1
+python tests\test_variant_contract.py || exit /b 1
 python tests\simulate_time_scheduler.py || exit /b 1
 
 if defined NODE_EXE goto have_node
@@ -29,6 +30,14 @@ for %%S in (1 2 3 4 5) do (
   idf.py -B build-quality-stage%%S size || exit /b 1
   idf.py -B build-quality-stage%%S size-components || exit /b 1
 )
+
+for %%V in (CORE CORE_SENSOR CORE_CLOUD FULL) do (
+  idf.py -B build-quality-variant-%%V -D LIGHTGW_VARIANT=%%V build || exit /b 1
+  idf.py -B build-quality-variant-%%V size || exit /b 1
+  idf.py -B build-quality-variant-%%V size-components || exit /b 1
+)
+
+python tests\report_build_metrics.py || exit /b 1
 
 echo CHECK_ALL PASS
 endlocal

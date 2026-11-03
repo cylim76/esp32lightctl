@@ -1,0 +1,18 @@
+menu "Light Gateway shared I2C bus"
+
+config LIGHTGW_I2C_SDA_GPIO
+    int "Shared I2C SDA GPIO"
+    default 6
+    range 0 30
+
+config LIGHTGW_I2C_SCL_GPIO
+    int "Shared I2C SCL GPIO"
+    default 7
+    range 0 30
+
+config LIGHTGW_I2C_FREQUENCY_HZ
+    int "Shared I2C clock frequency"
+    default 100000
+    range 10000 400000
+
+endmenu

@@ -2,7 +2,7 @@
 
 ## 结论边界
 
-本报告记录的是 `ESP-IDF 5.5.1` 对 `0.9.0-stageN` 的最新真实构建结果，并保留早期版本的对照数据。`idf.py size` 的静态占用不能证明设备在 Wi-Fi、Zigbee、RMT、I2C 或未来 RainMaker 并发运行时具有足够余量。所有运行时峰值和长期稳定性项目在开发板实测前均为 `NOT TESTED`。
+本报告记录的是 `ESP-IDF 5.5.1` 对 `0.10.0-stageN` 和四种命名变体的最新真实构建结果，并保留早期版本的对照数据。`idf.py size` 的静态占用不能证明设备在 Wi-Fi、Zigbee、RMT、I2C 或未来 RainMaker 并发运行时具有足够余量。所有运行时峰值和长期稳定性项目在开发板实测前均为 `NOT TESTED`。
 
 ESP32-C6-DevKitC-1-N8 标称有 512 KB HP SRAM，但链接器本次报告可参与 DIRAM 统计的区域为 452,112 B。下表不能用 512 KB 直接减去静态占用来推断运行时 Free Heap；Wi-Fi/Zigbee 驱动、任务栈、TLS、网络缓冲和碎片化都需要上板测量。
 
@@ -108,3 +108,16 @@ Stage 5 的 0.8.0 基线 BIN 为 1,483,408 B；0.9.0 复测为 1,493,872 B，均
 | 5 | 1,354,022 B | 215,902 B | 16,000 B | 76,160 B | 236,210 B |
 
 `runtime_nvs` 是 Flash 分区，不占用上述静态 DIRAM；调度持久化缓存和 RAM 日志已经计入 Stage 4/5 的 `.bss`。这些数字仍不能证明 Wi-Fi、Zigbee、RMT、RTC 及未来 RainMaker 同时运行时的动态堆余量；实机峰值项目保持 `NOT TESTED`。
+
+## 0.10.0 模块化变体复测
+
+2026-11-03 使用独立 `build-quality-variant-*` 目录，对四种变体实际执行 `build`、`size` 和 `size-components`，全部退出 0。这里的 Cloud 只是 RainMaker 单向适配边界，不包含真实 TLS/MQTT，因此不能作为 RainMaker 集成后内存数据。
+
+| 变体 | 应用 BIN | Flash | 静态 DIRAM | data / bss | BIN SHA-256 |
+|---|---:|---:|---:|---:|---|
+| CORE | 1,494,272 B | 1,354,422 B | 215,918 B | 16,008 / 76,168 B | `2a84731adc2fd6999152415e1bd22112fa1292c0c0a0785302b591c980635e57` |
+| CORE_SENSOR | 1,495,168 B | 1,355,312 B | 215,918 B | 16,008 / 76,168 B | `f5bac787f51dfd64aa91d6ae4ddd867720f1c72b503902d0859ee35cb2147992` |
+| CORE_CLOUD | 1,494,800 B | 1,354,956 B | 215,918 B | 16,008 / 76,168 B | `019b828c607fb6d6b4bf8513ba53ef01a4028dd6c025253d17b8c35ae855c1c3` |
+| FULL | 1,495,552 B | 1,355,696 B | 215,918 B | 16,008 / 76,168 B | `36e9f1c50570dafe23e23ae40d28262ea5addb7fc8ae3239ce257c7e616b2e35` |
+
+相对 CORE，当前两个独立探测型传感器组件合计增加 890 B Flash/0 B 静态 DIRAM，Cloud 占位适配层增加 534 B Flash/0 B 静态 DIRAM。该差值只反映当前占位实现；真正的传感器采样缓存与 RainMaker TLS/MQTT 尚未实现，未来必须重新测量。CORE 的生成组件清单不含 `bh1750`、`sht31` 或 `rainmaker`。

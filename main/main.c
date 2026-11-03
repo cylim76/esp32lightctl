@@ -7,6 +7,9 @@
 #if LIGHTGW_HAS_CONTROL
 #include "device_control.h"
 #endif
+#if LIGHTGW_HAS_EXTENSIONS
+#include "extension_manager.h"
+#endif
 #if LIGHTGW_HAS_IR
 #include "ir_manager.h"
 #endif
@@ -50,10 +53,16 @@ void app_main(void)
 #if LIGHTGW_HAS_CONTROL
     ESP_ERROR_CHECK(device_control_start());
 #endif
+#if LIGHTGW_HAS_EXTENSIONS
+    /* Optional modules are one-way clients of Core services. Their manager
+       always returns success so missing experiments cannot prevent startup. */
+    ESP_ERROR_CHECK(extension_manager_start());
+#endif
 #if LIGHTGW_HAS_SCHEDULER
     ESP_ERROR_CHECK(scheduler_start());
 #endif
     ESP_ERROR_CHECK(web_server_start());
     diagnostics_record_memory_event("startup_complete");
-    ESP_LOGI(TAG, "ESP32-C6 standalone light gateway Stage %d started", LIGHTGW_STAGE);
+    ESP_LOGI(TAG, "ESP32-C6 standalone light gateway Stage %d variant %s started",
+             LIGHTGW_STAGE, LIGHTGW_VARIANT_NAME);
 }

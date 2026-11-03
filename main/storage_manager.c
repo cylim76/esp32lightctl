@@ -186,7 +186,12 @@ esp_err_t storage_manager_factory_reset(const char *confirmation)
     esp_err_t err = nvs_flash_erase();
     if (err != ESP_OK && first_error == ESP_OK) first_error = err;
 
-    const char *nvs_partitions[] = {APP_RUNTIME_STORAGE_PARTITION, APP_IR_STORAGE_PARTITION};
+    const char *nvs_partitions[] = {
+        APP_RUNTIME_STORAGE_PARTITION,
+        APP_IR_STORAGE_PARTITION,
+        APP_SENSOR_STORAGE_PARTITION,
+        APP_CLOUD_STORAGE_PARTITION,
+    };
     for (size_t i = 0; i < sizeof(nvs_partitions) / sizeof(nvs_partitions[0]); ++i) {
         if (!esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS,
                                       nvs_partitions[i])) continue;

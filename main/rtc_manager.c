@@ -5,6 +5,8 @@
 #include "driver/i2c_master.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "i2c_bus_manager.h"
+#include "sdkconfig.h"
 
 #define DS3231_REG_TIME    0x00
 #define DS3231_REG_STATUS  0x0F
@@ -65,23 +67,12 @@ static esp_err_t write_registers(const uint8_t *data, size_t length)
 esp_err_t rtc_manager_init(void)
 {
     memset(&s_status, 0, sizeof(s_status));
-    i2c_master_bus_config_t bus_config = {
-        .i2c_port = I2C_NUM_0,
-        .sda_io_num = APP_RTC_I2C_SDA_GPIO,
-        .scl_io_num = APP_RTC_I2C_SCL_GPIO,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    esp_err_t err = i2c_new_master_bus(&bus_config, &s_bus);
-    if (err != ESP_OK) {
-        note_result(err);
-        return err;
-    }
+    esp_err_t err = i2c_bus_manager_get(&s_bus);
+    if (err != ESP_OK) { note_result(err); return err; }
     i2c_device_config_t device_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = APP_RTC_I2C_ADDRESS,
-        .scl_speed_hz = APP_RTC_I2C_FREQUENCY_HZ,
+        .scl_speed_hz = CONFIG_LIGHTGW_I2C_FREQUENCY_HZ,
     };
     err = i2c_master_bus_add_device(s_bus, &device_config, &s_device);
     if (err != ESP_OK) {
@@ -91,8 +82,9 @@ esp_err_t rtc_manager_init(void)
     s_status.initialized = true;
     err = i2c_master_probe(s_bus, APP_RTC_I2C_ADDRESS, 100);
     note_result(err);
-    if (err == ESP_OK) ESP_LOGI(TAG, "DS3231 detected at 0x%02x on SDA GPIO%d/SCL GPIO%d",
-                               APP_RTC_I2C_ADDRESS, APP_RTC_I2C_SDA_GPIO, APP_RTC_I2C_SCL_GPIO);
+    if (err == ESP_OK) ESP_LOGI(TAG, "DS3231 detected at 0x%02x on shared SDA GPIO%d/SCL GPIO%d",
+                               APP_RTC_I2C_ADDRESS, CONFIG_LIGHTGW_I2C_SDA_GPIO,
+                               CONFIG_LIGHTGW_I2C_SCL_GPIO);
     else ESP_LOGW(TAG, "DS3231 not detected: %s; gateway continues without RTC", esp_err_to_name(err));
     return err;
 }

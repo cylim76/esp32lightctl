@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
 
 set(LIGHTGW_STAGE "4" CACHE STRING "Firmware stage (1..5)")
+set(LIGHTGW_VARIANT "STAGE" CACHE STRING "Firmware variant: STAGE, CORE, CORE_SENSOR, CORE_CLOUD, or FULL")
+string(TOUPPER "${LIGHTGW_VARIANT}" LIGHTGW_VARIANT)
+set(_lightgw_variants STAGE CORE CORE_SENSOR CORE_CLOUD FULL)
+list(FIND _lightgw_variants "${LIGHTGW_VARIANT}" _lightgw_variant_index)
+if(_lightgw_variant_index EQUAL -1)
+    message(FATAL_ERROR "LIGHTGW_VARIANT must be STAGE, CORE, CORE_SENSOR, CORE_CLOUD, or FULL")
+endif()
+
+if(NOT LIGHTGW_VARIANT STREQUAL "STAGE")
+    # All named variants contain the complete Stage 5 Core and share its stable
+    # partition layout. Extension selection never changes core data addresses.
+    set(LIGHTGW_STAGE "5" CACHE STRING "Firmware stage (1..5)" FORCE)
+endif()
 if(NOT LIGHTGW_STAGE MATCHES "^[1-5]$")
     message(FATAL_ERROR "LIGHTGW_STAGE must be 1, 2, 3, 4, or 5")
 endif()
@@ -13,13 +26,29 @@ if(LIGHTGW_STAGE EQUAL 5)
 else()
     set(SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
 endif()
-set(PROJECT_VER "0.9.0-stage${LIGHTGW_STAGE}")
+if(NOT LIGHTGW_VARIANT STREQUAL "STAGE")
+    string(TOLOWER "${LIGHTGW_VARIANT}" _lightgw_variant_lower)
+    list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/sdkconfig.variant.${_lightgw_variant_lower}")
+    set(PROJECT_VER "0.10.0-${_lightgw_variant_lower}")
+    if(LIGHTGW_VARIANT STREQUAL "CORE_SENSOR" OR LIGHTGW_VARIANT STREQUAL "FULL")
+        list(APPEND EXTRA_COMPONENT_DIRS
+            "${CMAKE_SOURCE_DIR}/extensions/bh1750"
+            "${CMAKE_SOURCE_DIR}/extensions/sht31"
+        )
+    endif()
+    if(LIGHTGW_VARIANT STREQUAL "CORE_CLOUD" OR LIGHTGW_VARIANT STREQUAL "FULL")
+        list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/extensions/rainmaker")
+    endif()
+else()
+    set(PROJECT_VER "0.10.0-stage${LIGHTGW_STAGE}")
+endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Only traverse the application and its declared dependency graph. Besides
 # making builds deterministic, this avoids pulling unrelated IDF components
 # (Bluetooth, MQTT, OpenThread) into a Wi-Fi + Zigbee-only firmware.
 idf_build_set_property(MINIMAL_BUILD ON)
+idf_build_set_property(LIGHTGW_VARIANT_NAME "${LIGHTGW_VARIANT}")
 project(esp32c6_light_gateway)
 
-message(STATUS "esp32lightctl firmware Stage ${LIGHTGW_STAGE}")
+message(STATUS "esp32lightctl firmware Stage ${LIGHTGW_STAGE}, variant ${LIGHTGW_VARIANT}")

@@ -1,12 +1,12 @@
 # 代码质量与自动测试报告
 
 日期：2026-11-03  
-版本：`0.9.0-stageN`  
+版本：`0.10.0-stageN` / `0.10.0-{core,core_sensor,core_cloud,full}`
 工具链：ESP-IDF 5.5.1、RISC-V GCC 14.2.0、esp-zigbee-lib 1.6.8、esp-zboss-lib 1.6.4。
 
 ## 交付结论
 
-本轮源码检查、Web 契约检查、时间模型、JavaScript 解析、15 项生产 C 逻辑 QEMU 测试、ESP32-C6 测试镜像构建、Stage 1～5 固件构建以及五个 Stage 的 `size` / `size-components` 均已实际执行并通过。没有把这些软件结果标记成硬件通过；Flash 断电、真实 NVS 满、无线掉线、RMT/RTC、长期磨损和无人值守稳定性仍为 `NOT TESTED`。
+本轮源码检查、Web 契约检查、时间模型、JavaScript 解析、生产 C 测试工程构建、Stage 1～5 和 CORE/CORE_SENSOR/CORE_CLOUD/FULL 固件构建，以及九个构建的 `size` / `size-components` 均已实际执行并通过。没有把这些软件结果标记成硬件通过；Flash 断电、真实 NVS 满、无线掉线、RMT/RTC、长期磨损和无人值守稳定性仍为 `NOT TESTED`。
 
 ## 确定问题与修复
 
@@ -65,13 +65,15 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 
 | Stage | 构建 | `.bin` | Flash Code | 静态 DIRAM | SHA-256 |
 |---|---|---:|---:|---:|---|
-| 1 | PASS | 1,076,416 B | 949,114 B | 160,356 B | `ccc64d3b6ad5963ce2d9756a79a50a2261fb7a4658e45b98fb28dafc6627b866` |
-| 2 | PASS | 1,437,856 B | 1,302,316 B | 192,386 B | `bfcadad4dda22648f64e094bbb2c7d6c4b61941aae03994f0d41498d2f6aa2cc` |
-| 3 | PASS | 1,441,232 B | 1,305,682 B | 192,386 B | `dc55fd7f7926ae131b77914b4040d2389c53e58ea525819d61e45db02c773190` |
-| 4 | PASS | 1,457,392 B | 1,321,844 B | 206,738 B | `3639c525a9d005e1830a96bc115ad9f5f48d37960b0b344ffd7a8a83e42d9d7a` |
-| 5 | PASS | 1,493,872 B | 1,354,022 B | 215,902 B | `35d32c750c6965861c3ed2ecb3ad4bce027784c716f58cdd46d5e6b36659ec8e` |
+| 1 | PASS | 1,076,832 B | 949,522 B | 160,376 B | `165131e2aec1a9bc8277211664c4a24aa032d95d9d9beb8eee3057ec9894a825` |
+| 2 | PASS | 1,438,288 B | 1,302,730 B | 192,414 B | `6330952ff8d13d4ba11faee3e0aa169831429aae77ac4ce87cc5879a0eab86ef` |
+| 3 | PASS | 1,441,648 B | 1,306,092 B | 192,414 B | `07ee15fba47ed29366dbb9bcd0b28368a15e40da7fdb63c07acc38e263c0922f` |
+| 4 | PASS | 1,457,808 B | 1,322,254 B | 206,766 B | `28e95f312fc5e5ad576ab4b64894bc9cd89da42023d37d6a999af34663a5e00d` |
+| 5 | PASS | 1,494,288 B | 1,354,430 B | 215,918 B | `b6576acc6164919829112ade6b89f1c72b82eb2227c1fbb4cdb426cdac78adb5` |
 
 以上是构建期静态数据。运行时 Free Heap、Minimum Free Heap、Largest Free Block、各任务 Stack High Water Mark 和关键内存事件已在 Web 诊断实现，但数值必须在真实 ESP32-C6 负载下采集。
+
+四种命名变体也已分别构建和统计：CORE / CORE_SENSOR / CORE_CLOUD / FULL 的 BIN 分别为 1,494,272 / 1,495,168 / 1,494,800 / 1,495,552 B；对应 SHA-256 与 Flash/DIRAM 明细见 `MEMORY_RESOURCE_REPORT.md`。CORE 的构建图确认不含 BH1750/SHT31/RainMaker 组件；扩展硬件和真正 RainMaker 传输仍为 `NOT TESTED / NOT IMPLEMENTED`。
 
 ## 故障要求覆盖状态
 

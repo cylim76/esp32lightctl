@@ -26,7 +26,7 @@ Stage 1～4 的地址如下；新增 `runtime_nvs` 位于所有既有分区之�
 | `coredump` | `0x351000` | 64 KiB | 崩溃转储 | 仅崩溃时 |
 | `runtime_nvs` | `0x361000` | 64 KiB | 56 个调度任务的防重复/重试状态 | 状态实际变化且执行安全需要时 |
 
-Stage 5 在 `coredump` 后增加 `ir_data`（`0x361000`，64 KiB），`runtime_nvs` 随后位于 `0x371000`。Stage 5 最后一个已定义分区结束于 `0x381000`，至 8 MiB Flash 末尾尚有约 4.50 MiB 未分配空间。这里的“未分配”是分区表计算结果，不代表 NVS 可用条目或运行时余量已经过硬件测量。
+Stage 5 在 `coredump` 后增加 `ir_data`（`0x361000`，64 KiB），`runtime_nvs` 随后位于 `0x371000`。0.10.0 命名变体继续追加 `sensor_nvs`（`0x381000`）和 `cloud_nvs`（`0x391000`），均为 64 KiB；所有 Core 分区地址保持不变。最后一个分区结束于 `0x3A1000`，至 8 MiB Flash 末尾尚有约 4.37 MiB 未分配空间。这里的“未分配”是分区表计算结果，不代表 NVS 可用条目或运行时余量已经过硬件测量。
 
 当前分区表不是 OTA 布局：只有一个 `factory` 应用，且没有 `otadata`、`ota_0`、`ota_1`。剩余 Flash 足以继续评估双 OTA 方案，但启用 OTA 必须重新设计分区并做升级/回滚和数据保留测试；本次没有冒险更改已发布分区地址。
 
@@ -53,7 +53,7 @@ Stage 5 在 `coredump` 后增加 `ir_data`（`0x361000`，64 KiB），`runtime_n
 - `runtime_nvs` 不可用、写失败或记录校验失败时，自动调度停止，手动 Web、Wi-Fi、Zigbee 和红外控制不因此被擦除。
 - 红外 NVS 不可用时只禁用红外子系统，照明与 Web 继续启动。
 - Web `/api/diagnostics/resources` 显示每个 NVS 分区的 initialized、used/free/total entries、namespace count、最近错误以及写入/跳过/失败/损坏计数。`nvs_get_stats()` 的真实条目数必须在设备运行后采集。
-- 破坏性恢复出厂设置擦除主/运行/红外 NVS 和 Zigbee 网络分区，但保留 coredump；它只能从管理员认证接口发起并要求精确确认文本。命令行 `erase-flash` 仍是破坏性操作，不属于自动恢复路径。
+- 破坏性恢复出厂设置擦除主/运行/红外/传感器/云 NVS 和 Zigbee 网络分区，但保留 coredump；它只能从管理员认证接口发起并要求精确确认文本。命令行 `erase-flash` 仍是破坏性操作，不属于自动恢复路径。
 
 ## 写入调用清单
 

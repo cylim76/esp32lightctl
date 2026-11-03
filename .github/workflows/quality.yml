@@ -19,6 +19,7 @@ jobs:
           node-version: "22"
       - run: python tests/static_storage_check.py
       - run: python tests/test_web_storage_contract.py
+      - run: python tests/test_variant_contract.py
       - run: python tests/simulate_time_scheduler.py
       - run: node tests/check_web_js.js
 
@@ -42,6 +43,19 @@ jobs:
       - uses: actions/checkout@v4
       - run: idf.py -B build-quality-c6 -DIDF_TARGET=esp32c6 build
         working-directory: tests/phase_a_app
+
+  variants:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.1
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [CORE, CORE_SENSOR, CORE_CLOUD, FULL]
+    steps:
+      - uses: actions/checkout@v4
+      - run: idf.py -B build-ci-variant-${{ matrix.variant }} -D LIGHTGW_VARIANT=${{ matrix.variant }} build
+      - run: idf.py -B build-ci-variant-${{ matrix.variant }} size
+      - run: idf.py -B build-ci-variant-${{ matrix.variant }} size-components
 
   c-tests-qemu:
     runs-on: ubuntu-latest

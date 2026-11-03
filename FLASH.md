@@ -33,6 +33,24 @@ idf.py -B build-stage4 -D LIGHTGW_STAGE=4 -p COM7 flash
 idf.py -B build-stage5 -D LIGHTGW_STAGE=5 -p COM7 flash
 ```
 
+命名变体使用完整 Stage 5 Core 和同一兼容分区表。先构建，再普通烧录；切换变体不得执行 `erase-flash`：
+
+```bat
+build-variant.bat CORE
+idf.py -B build-variant-CORE -D LIGHTGW_VARIANT=CORE -p COM7 flash
+
+build-variant.bat CORE_SENSOR
+idf.py -B build-variant-CORE_SENSOR -D LIGHTGW_VARIANT=CORE_SENSOR -p COM7 flash
+
+build-variant.bat CORE_CLOUD
+idf.py -B build-variant-CORE_CLOUD -D LIGHTGW_VARIANT=CORE_CLOUD -p COM7 flash
+
+build-variant.bat FULL
+idf.py -B build-variant-FULL -D LIGHTGW_VARIANT=FULL -p COM7 flash
+```
+
+从实验变体退回 CORE 前必须按 `ROLLBACK.md` 备份 Flash；当前尚未完成目标板回退演练。
+
 串口监控：
 
 ```bat

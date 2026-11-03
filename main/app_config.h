@@ -23,10 +23,7 @@
 #define APP_TIMEZONE_DEFAULT          "CST-8"
 
 /* DS3231 is optional on every Stage. RTC stores UTC; application uses CST-8. */
-#define APP_RTC_I2C_SDA_GPIO           6
-#define APP_RTC_I2C_SCL_GPIO           7
 #define APP_RTC_I2C_ADDRESS            0x68
-#define APP_RTC_I2C_FREQUENCY_HZ       100000
 #define APP_TIME_MIN_VALID_EPOCH       1793462400LL /* 2026-11-01 00:00:00 CST */
 #define APP_TIME_MAX_VALID_EPOCH       4102444799LL /* 2099-12-31 23:59:59 UTC */
 #define APP_NTP_DAILY_HOUR_LOCAL       2
@@ -46,6 +43,8 @@
 #define APP_IR_MAX_DURATIONS           1024
 #define APP_IR_MAX_FRAME_US            300000
 #define APP_IR_STORAGE_PARTITION       "ir_data"
+#define APP_SENSOR_STORAGE_PARTITION   "sensor_nvs"
+#define APP_CLOUD_STORAGE_PARTITION    "cloud_nvs"
 #define APP_IR_TASK_HISTORY             16
 
 #define AQARA_MODEL_ID                "lumi.switch.l3acn3"

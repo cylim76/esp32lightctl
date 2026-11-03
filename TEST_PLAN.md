@@ -68,6 +68,16 @@
 
 资源判定必须使用同一固件 SHA-256 和可复现负载。编译器的静态 DIRAM 统计、QEMU 或模拟测试不得写为硬件内存 `PASS`。
 
+## 命名固件变体
+
+1. 对 CORE、CORE_SENSOR、CORE_CLOUD、FULL 分别使用独立目录执行 `build`、`size`、`size-components` 并记录 SHA-256。
+2. 检查 CORE 的生成组件清单不含 `sensors`、`rainmaker`，启动日志不出现扩展初始化。
+3. 不接 BH1750/SHT31 启动 CORE_SENSOR，Core 必须继续工作；传感器缺失只记诊断。
+4. RainMaker 网络不可用或扩展返回失败时，CORE_CLOUD/FULL 的 Wi-Fi、Web、本地调度和手动控制不得停止。
+5. FULL→CORE 普通刷写后逐项检查 Wi-Fi、Zigbee 网络、红外码、RTC 配置和 56 条任务均保留；扩展分区不得被 CORE 初始化或擦除。
+6. 拆除两个 Sensor 后确认 DS3231 继续通过共享 I²C 工作；不得由扩展删除或重配 Core 总线。
+7. 按 `ROLLBACK.md` 执行完整备份、SHA-256 校验、回退和恢复演练。所有目标板项目完成前保持 `NOT TESTED`。
+
 ## Phase A 统一控制专项
 
 - 烧录 `tests/phase_a_app/build-quality-c6/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY PASS: 15 tests` 的完整串口日志；15 项全部 PASS 才能把 C6 目标板测试状态从 `NOT TESTED` 改为 PASS。QEMU PASS 只能记为 `SIMULATED PASS`。

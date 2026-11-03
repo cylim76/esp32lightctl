@@ -115,7 +115,9 @@ Phase A 的控制边界见 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [DEVICE_CONTRO
 
 Stage 1～5 的 `idf.py size` / `size-components` 结果、运行时内存测试方法、Stage 6 RainMaker 前基线与 8 MB 双 OTA 候选规划见 [MEMORY_RESOURCE_REPORT.md](MEMORY_RESOURCE_REPORT.md)。可用 `memory-report.bat N` 重跑指定 Stage。静态构建结果不代表运行时内存余量已经通过硬件验证。
 
-Flash/NVS 写入点、分区用途、非破坏性恢复策略和迁移风险见 [STORAGE_AUDIT.md](STORAGE_AUDIT.md)；本轮编译、QEMU C 测试、接口检查及未验证项见 [QUALITY_TEST_REPORT.md](QUALITY_TEST_REPORT.md)。开发修改后应运行 `check-all.bat`；它会执行源码存储策略检查、Web 接口检查、时间模型、JavaScript 解析、C6 测试固件构建以及 Stage 1～5 的 build/size/size-components。Node.js 不在 PATH 时通过 `NODE_EXE` 指定完整路径。
+Flash/NVS 写入点、分区用途、非破坏性恢复策略和迁移风险见 [STORAGE_AUDIT.md](STORAGE_AUDIT.md)；本轮编译、QEMU C 测试、接口检查及未验证项见 [QUALITY_TEST_REPORT.md](QUALITY_TEST_REPORT.md)。开发修改后应运行 `check-all.bat`；它会执行源码存储策略检查、Web/变体接口检查、时间模型、JavaScript 解析、C6 测试固件构建、Stage 1～5 以及四种固件变体的 build/size/size-components。Node.js 不在 PATH 时通过 `NODE_EXE` 指定完整路径。
+
+模块化构建见 [FIRMWARE_VARIANTS.md](FIRMWARE_VARIANTS.md)，安全移除与回退见 [ROLLBACK.md](ROLLBACK.md)，Core 优先的 Phase A～E 路线见 [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)。BH1750、SHT31 和 RainMaker 当前仍是实验边界，未实现的采样/云传输不会被标记为功能通过。
 
 ## USB 烧录与监控
 
