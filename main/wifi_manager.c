@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include "app_config.h"
+#include "diagnostics.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -58,11 +59,14 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *event = data;
         xEventGroupClearBits(s_events, WIFI_CONNECTED_BIT | TIME_SYNCED_BIT);
         strlcpy(s_ip, "0.0.0.0", sizeof(s_ip));
         unsigned backoff_ms = 1000U << (s_retry < 5 ? s_retry : 5);
         ++s_retry;
-        ESP_LOGW(TAG, "Wi-Fi disconnected; retry %u in %u ms", s_retry, backoff_ms);
+        ESP_LOGW(TAG, "Wi-Fi disconnected reason=%u; retry %u in %u ms",
+                 event ? event->reason : 0, s_retry, backoff_ms);
+        diagnostics_set_error(TAG, "disconnected reason=%u", event ? event->reason : 0);
         if (!esp_timer_is_active(s_retry_timer)) esp_timer_start_once(s_retry_timer, (uint64_t)backoff_ms * 1000);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = data;
@@ -150,3 +154,10 @@ void wifi_manager_get_ip(char *out, size_t out_len)
 }
 
 const char *wifi_manager_provision_ssid(void) { return s_ap_ssid; }
+
+int wifi_manager_get_rssi(void)
+{
+    if (!wifi_manager_is_connected()) return 0;
+    wifi_ap_record_t ap = {0};
+    return esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? ap.rssi : 0;
+}

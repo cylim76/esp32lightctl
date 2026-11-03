@@ -1,6 +1,6 @@
 # ESP32-C6 独立 Zigbee 智能照明网关
 
-面向 `ESP32-C6-DevKitC-1-N8` 与 Aqara D1 单火三开 `QBKG25LM` 的独立局域网网关。固件在一块 C6 上同时运行 Wi-Fi STA、Zigbee Coordinator、HTTP 控制页、NTP 和本地定时任务；不需要 Aqara 网关、Zigbee2MQTT、Home Assistant、MQTT 或常开 PC。
+面向 `ESP32-C6-DevKitC-1-N8` 与 Aqara D1 单火三开 `QBKG25LM` 的独立局域网网关。同一套源码可构建四个独立验证阶段；完整 Stage 4 在一块 C6 上同时运行 Wi-Fi STA、Zigbee Coordinator、HTTP 控制页、NTP 和本地定时任务，不需要 Aqara 网关、Zigbee2MQTT、Home Assistant、MQTT 或常开 PC。
 
 > 安全警告：QBKG25LM 直接连接市电。安装、拆卸和测量必须断电，并由具备资质的电工执行。ESP32 开发板不能与开关的市电端子有任何电气连接；两者只通过 Zigbee 通信。
 
@@ -9,8 +9,8 @@
 - ESP32-C6 集成 2.4 GHz Wi-Fi 与 IEEE 802.15.4，ESP Zigbee SDK 自 0.5.4 起明确加入了 C6 单芯片 Wi-Fi/Zigbee gateway coexist 支持。本工程启用 `CONFIG_ESP_COEX_SW_COEXIST_ENABLE`，Wi-Fi 使用 `WIFI_PS_MIN_MODEM`，并调用 `esp_coex_wifi_i154_enable()`。
 - 这不是“同时双接收”：C6 的两个协议共享射频和单天线，由软件仲裁分时使用。Espressif 对正式 Wi-Fi Zigbee 网关仍推荐 ESP32-S3 + ESP32-H2 双 SoC/双天线，以获得同时接收能力。因此本方案在功能上可行，但高 Wi-Fi 占空比、弱信号和拥挤 2.4 GHz 环境下的丢包率/配对率必须在现场验证。
 - 固定版本为 **ESP-IDF 5.5.1 + esp-zigbee-lib 1.6.8 + esp-zboss-lib 1.6.4**。1.6.8 是官方仍维护的 1.x LTS，并明确基于 IDF 5.5.1；没有把 2026 年 2.x 新栈 API 与旧示例混用。
-- QBKG25LM 的 Zigbee model 是 `lumi.switch.l3acn3`。开关控制使用标准 ZCL On/Off Cluster `0x0006`，端点 1/2/3 分别对应左/中/右。`state_left` 等只是 Zigbee2MQTT 的上层属性名，不是 Zigbee 命令。
-- 经验证的开源转换器还会向 Aqara 厂商 Cluster `0xFCC0`、属性 `0x0009`（UINT8）、厂商码 `0x115F` 写入 `1`。本工程复用了这一初始化，并先读取 Active Endpoints/Simple Descriptors，确认端点确实提供 `0x0006` server 后才允许 Web 控制。
+- 上游资料把 QBKG25LM 的 Zigbee model 标识为 `lumi.switch.l3acn3`，并通过标准 ZCL On/Off Cluster `0x0006` 控制。`state_left` 等只是 Zigbee2MQTT 的上层属性名，不是 Zigbee 命令。端点编号及其左/中/右关系必须由本项目的 Stage 3 在实机上采集，不能直接照搬上游映射。
+- 经验证的开源转换器还会向 Aqara 厂商 Cluster `0xFCC0`、属性 `0x0009`（UINT8）、厂商码 `0x115F` 写入 `1`。Stage 3 只记录 Active Endpoints、Simple Descriptors 和 Cluster；Stage 4 也只有在用户根据实机日志明确确认三个不同的 On/Off server 端点后，才解锁控制和执行该初始化。
 
 官方依据：
 
@@ -27,7 +27,7 @@
 - Wi-Fi 断线指数退避自动重连；串口打印连接状态和 IPv4 地址。
 - 管理密码使用随机盐 + PBKDF2-HMAC-SHA256（120,000 次）保存；控制页面及 API 使用 HTTP Basic 访问控制。
 - Coordinator 建网、180 秒允许入网、设备 announce、Active Endpoint/Simple Descriptor/model 发现。
-- QBKG25LM 端点 1/2/3 的 On/Off 控制、初始状态读取、属性上报和命令后回读。
+- Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
 - Zigbee 栈网络数据保存在 `zb_storage` 分区；应用设备表、Wi-Fi 和定时设置保存在 NVS。
 - 每日按星期自动全部关灯；仅在 Wi-Fi 在线并在本次连接中 NTP 同步成功后执行。断网时跳过，不补发。
 - 默认定时关闭，启动/重启不会主动改变继电器状态。
@@ -37,6 +37,8 @@
 ```text
 main/
   main.c                 初始化顺序
+  stage_config.h         单源码 Stage 1～4 功能边界
+  diagnostics.c          运行时间、Heap、复位和最近错误诊断
   settings.c             NVS、PBKDF2 管理密码、定时配置
   wifi_manager.c         首次配网、STA 重连、NTP
   web_server.c           鉴权 HTTP API
@@ -61,8 +63,10 @@ install.bat esp32c6
 export.bat
 
 cd D:\RPA\esp32lightctl
-idf.py set-target esp32c6
-idf.py build
+build-stage.bat 1
+build-stage.bat 2
+build-stage.bat 3
+build-stage.bat 4
 ```
 
 ### Linux/macOS
@@ -74,49 +78,33 @@ cd ~/esp/esp-idf-v5.5.1
 . ./export.sh
 
 cd /path/to/esp32lightctl
-idf.py set-target esp32c6
-idf.py build
+idf.py -B build-stage1 -D LIGHTGW_STAGE=1 build
+idf.py -B build-stage2 -D LIGHTGW_STAGE=2 build
+idf.py -B build-stage3 -D LIGHTGW_STAGE=3 build
+idf.py -B build-stage4 -D LIGHTGW_STAGE=4 build
 ```
 
 Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-lib =1.6.8` 和 `esp-zboss-lib =1.6.4`。不要把约束改成 `*` 或直接用 SDK main 分支。
 
 ### 本地编译验证记录
 
-2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4` 完成了最终集成构建：
-
-```bat
-idf.py build
-```
-
-构建结果：
-
-- `bootloader.bin`：`0x57e0` 字节，bootloader 分区剩余 31%；
-- `esp32c6_light_gateway.bin`：`0x142b20` 字节（约 1.26 MiB）；
-- factory 应用分区：3 MiB，剩余 `0x1bd4e0` 字节（58%）；
-- 分区表、内置网页、Wi-Fi/NTP/NVS/HTTP、调度器、Coordinator、设备发现及三路控制源码均参与同一次编译和最终链接。
-
-当前 `build` 目录产物 SHA-256：
-
-```text
-esp32c6_light_gateway.bin  c57f023472959a49933992ee236aa9d45f8477cec3efe748cb95d320d281af3c
-bootloader.bin             e911315ab508cf6d9cfb64b51b23c3e4d09239e63705ad379be43c22f62175e8
-partition-table.bin        9087e0ba8008ce05983c896735c945801f3c34d4e4038528ddd619116765659b
-```
-
-四个开发阶段的源码都已纳入上述最终集成构建；本工作区没有伪造四次独立的历史构建或硬件测试记录。使用完整的 `git clone --recursive` IDF 环境时，普通 `idf.py build` 即可得到等价结果。
+2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～4 执行了真实 `idf.py build`。构建结果、应用大小及最终 SHA-256 记录在 [BUILD.md](BUILD.md) 和 [firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt)。这些结果只证明编译与链接通过，不代表硬件测试通过。
 
 ## USB 烧录与监控
 
 将 DevKitC-1 的 USB 口连接电脑，先识别串口，再执行：
 
 ```bat
-idf.py -p COM7 flash monitor
+flash.bat COM7 1
+monitor.bat COM7 1
 ```
 
-若直接使用本工作区已经验证的 `build_min2` 产物：
+依次验证其他 Stage 时只更改最后的阶段编号，例如：
 
 ```bat
-idf.py -B build_min2 -p COM7 flash monitor
+flash.bat COM7 2
+flash.bat COM7 3
+flash.bat COM7 4
 ```
 
 Linux 示例：
@@ -150,20 +138,19 @@ idf.py -p COM7 erase-flash flash monitor
 
 ## QBKG25LM 配对与测试
 
-1. 建议先让 Wi-Fi 和 NTP 稳定；确认页面显示 Zigbee PAN、信道 15。
+1. 先按 [TEST_PLAN.md](TEST_PLAN.md) 完成 Stage 1 和 Stage 2；Stage 3 中建议让 Wi-Fi 和 NTP 稳定，并确认页面显示 Zigbee PAN、信道 15。
 2. 点击“开放配对 180 秒”。
 3. 在 QBKG25LM 上长按按键约 10 秒，直到蓝灯闪烁后停止，松手等待。如果它仍属于旧网，必须先从旧 Coordinator 删除或执行设备复位。
 4. 串口应依次看到：
 
    ```text
    Device announce short=0x....
-   0x.... endpoint 1 exposes On/Off server cluster
-   0x.... endpoint 2 exposes On/Off server cluster
-   0x.... endpoint 3 exposes On/Off server cluster
-   Supported QBKG25LM discovered at 0x....
+   DIAG short=0x.... active_endpoint=...
+   DIAG short=0x.... ep=... input_cluster=0x0006
+   QBKG25LM model found at 0x....; control remains locked until physical channel mapping is confirmed
    ```
 
-5. 在页面分别切换左、中、右，现场确认对应继电器，不只看网页状态。
+5. 保存 Stage 3 完整日志，确认三个 On/Off server 端点及其与左/中/右继电器的实际对应关系。仅在 Stage 4 页面再次输入并明确确认该映射后，开关控件才会解锁。
 6. 用实体按键切换三路，确认页面在数秒内随 `0x0006/OnOff` 属性报告更新。
 7. 断开 ESP32 USB 电源 30 秒再上电：确认 PAN ID/设备仍在、不自动改变灯状态，并能重新读取三路状态。
 8. 断开办公室网络后跨过定时时刻：确认定时任务不执行；恢复网络并重新 NTP 同步后测试下一次定时。
@@ -194,3 +181,5 @@ idf.py -p COM7 erase-flash flash monitor
 - NTP/DNS/防火墙策略与办公室 Wi-Fi 的兼容性。
 
 遇到问题请保留从复位开始的完整 `idf.py monitor` 日志，尤其是 Zigbee announce、Simple Descriptor、read/report response、Wi-Fi disconnect reason 和 backtrace。
+
+统一硬件验证状态见 [HARDWARE_TEST_RECORD.md](HARDWARE_TEST_RECORD.md)。开发板到货前全部硬件测试均保持 `NOT TESTED`，不得因固件成功生成而改成 `PASS`。

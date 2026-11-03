@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "app_config.h"
+#include "diagnostics.h"
 #include "esp_check.h"
 #include "esp_coexist.h"
 #include "esp_log.h"
@@ -11,6 +12,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "stage_config.h"
 #include "zcl/esp_zigbee_zcl_command.h"
 
 static const char *TAG = "zigbee";
@@ -33,7 +35,7 @@ static void save_devices(void)
 {
     nvs_handle_t nvs;
     if (nvs_open("zb_app", NVS_READWRITE, &nvs) == ESP_OK) {
-        nvs_set_blob(nvs, "devices_v1", s_devices, sizeof(s_devices));
+        nvs_set_blob(nvs, "devices_v2", s_devices, sizeof(s_devices));
         nvs_commit(nvs);
         nvs_close(nvs);
     }
@@ -47,7 +49,7 @@ static void load_devices(void)
     nvs_handle_t nvs;
     size_t len = sizeof(s_devices);
     if (nvs_open("zb_app", NVS_READONLY, &nvs) == ESP_OK) {
-        if (nvs_get_blob(nvs, "devices_v1", s_devices, &len) != ESP_OK || len != sizeof(s_devices)) {
+        if (nvs_get_blob(nvs, "devices_v2", s_devices, &len) != ESP_OK || len != sizeof(s_devices)) {
             memset(s_devices, 0, sizeof(s_devices));
         }
         nvs_close(nvs);
@@ -66,6 +68,7 @@ static int find_device_by_short(uint16_t short_addr)
     return -1;
 }
 
+#if LIGHTGW_HAS_DISCOVERY
 static int find_or_add_device(uint16_t short_addr, const esp_zb_ieee_addr_t ieee)
 {
     int free_slot = -1;
@@ -88,6 +91,7 @@ static int find_or_add_device(uint16_t short_addr, const esp_zb_ieee_addr_t ieee
     }
     return free_slot;
 }
+#endif
 
 static void send_read(uint16_t addr, uint8_t endpoint, uint16_t cluster, uint16_t attr)
 {
@@ -116,6 +120,7 @@ static void poll_persisted_devices(void)
     xSemaphoreGive(s_devices_lock);
 }
 
+#if LIGHTGW_HAS_CONTROL
 static void configure_aqara(uint16_t addr, const uint8_t eps[3])
 {
     uint8_t mode = 1;
@@ -159,20 +164,35 @@ static void configure_aqara(uint16_t addr, const uint8_t eps[3])
     }
     read_all_states(addr, eps);
 }
+#endif
 
+#if LIGHTGW_HAS_DISCOVERY
 static void request_next_simple_desc(discovery_ctx_t *ctx);
 
 static void simple_desc_cb(esp_zb_zdp_status_t status, esp_zb_af_simple_desc_1_1_t *desc, void *user_ctx)
 {
     discovery_ctx_t *ctx = user_ctx;
     if (status == ESP_ZB_ZDP_STATUS_SUCCESS && desc && desc->app_profile_id == ESP_ZB_AF_HA_PROFILE_ID) {
+        ESP_LOGI(TAG, "DIAG short=0x%04x ep=%u profile=0x%04x device=0x%04x in_clusters=%u out_clusters=%u",
+                 ctx->short_addr, desc->endpoint, desc->app_profile_id, desc->app_device_id,
+                 desc->app_input_cluster_count, desc->app_output_cluster_count);
         for (uint8_t i = 0; i < desc->app_input_cluster_count; ++i) {
+            ESP_LOGI(TAG, "DIAG short=0x%04x ep=%u input_cluster=0x%04x",
+                     ctx->short_addr, desc->endpoint, desc->app_cluster_list[i]);
             if (desc->app_cluster_list[i] == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF && ctx->onoff_count < APP_MAX_ZIGBEE_ENDPOINTS) {
                 ctx->onoff_eps[ctx->onoff_count++] = desc->endpoint;
                 ESP_LOGI(TAG, "0x%04x endpoint %u exposes On/Off server cluster", ctx->short_addr, desc->endpoint);
                 break;
             }
         }
+        for (uint8_t i = 0; i < desc->app_output_cluster_count; ++i) {
+            ESP_LOGI(TAG, "DIAG short=0x%04x ep=%u output_cluster=0x%04x",
+                     ctx->short_addr, desc->endpoint,
+                     desc->app_cluster_list[desc->app_input_cluster_count + i]);
+        }
+    } else {
+        ESP_LOGW(TAG, "DIAG simple descriptor failed short=0x%04x status=%u",
+                 ctx->short_addr, status);
     }
     request_next_simple_desc(ctx);
 }
@@ -182,10 +202,12 @@ static void finish_discovery(discovery_ctx_t *ctx)
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_or_add_device(ctx->short_addr, ctx->ieee);
     if (idx >= 0) {
-        for (int ch = 0; ch < 3; ++ch) {
-            uint8_t expected = ch + 1;
-            for (uint8_t e = 0; e < ctx->onoff_count; ++e) if (ctx->onoff_eps[e] == expected) s_devices[idx].endpoints[ch] = expected;
-        }
+        s_devices[idx].mapping_confirmed = false;
+        memset(s_devices[idx].endpoints, 0, sizeof(s_devices[idx].endpoints));
+        s_devices[idx].discovered_endpoint_count = ctx->ep_count;
+        memcpy(s_devices[idx].discovered_endpoints, ctx->eps, ctx->ep_count);
+        s_devices[idx].onoff_endpoint_count = ctx->onoff_count;
+        memcpy(s_devices[idx].onoff_endpoints, ctx->onoff_eps, ctx->onoff_count);
         save_devices();
     }
     xSemaphoreGive(s_devices_lock);
@@ -216,6 +238,9 @@ static void active_ep_cb(esp_zb_zdp_status_t status, uint8_t count, uint8_t *eps
     }
     ctx->ep_count = count > APP_MAX_ZIGBEE_ENDPOINTS ? APP_MAX_ZIGBEE_ENDPOINTS : count;
     memcpy(ctx->eps, eps, ctx->ep_count);
+    for (uint8_t i = 0; i < ctx->ep_count; ++i) {
+        ESP_LOGI(TAG, "DIAG short=0x%04x active_endpoint=%u", ctx->short_addr, ctx->eps[i]);
+    }
     request_next_simple_desc(ctx);
 }
 
@@ -228,17 +253,24 @@ static void discover_device(uint16_t short_addr, const esp_zb_ieee_addr_t ieee)
     esp_zb_zdo_active_ep_req_param_t req = {.addr_of_interest = short_addr};
     esp_zb_zdo_active_ep_req(&req, active_ep_cb, ctx);
 }
+#endif
 
 static void update_onoff(uint16_t addr, uint8_t endpoint, bool on, int8_t rssi)
 {
+    bool mapped = false;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(addr);
     if (idx >= 0) {
-        for (int ch = 0; ch < 3; ++ch) if (s_devices[idx].endpoints[ch] == endpoint) s_devices[idx].state[ch] = on;
+        for (int ch = 0; ch < 3; ++ch) if (s_devices[idx].endpoints[ch] == endpoint) {
+            s_devices[idx].state[ch] = on;
+            mapped = true;
+        }
         s_devices[idx].online = true;
         s_devices[idx].last_rssi = rssi;
     }
     xSemaphoreGive(s_devices_lock);
+    ESP_LOGI(TAG, "State feedback short=0x%04x endpoint=%u value=%s rssi=%d mapped=%s",
+             addr, endpoint, on ? "ON" : "OFF", rssi, mapped ? "yes" : "no");
 }
 
 static void handle_read_response(const esp_zb_zcl_cmd_read_attr_resp_message_t *msg)
@@ -258,20 +290,15 @@ static void handle_read_response(const esp_zb_zcl_cmd_read_attr_resp_message_t *
             int idx = find_device_by_short(msg->info.src_address.u.short_addr);
             if (idx >= 0) {
                 strlcpy(s_devices[idx].model, model, sizeof(s_devices[idx].model));
-                bool eps_ok = s_devices[idx].endpoints[0] == 1 && s_devices[idx].endpoints[1] == 2 && s_devices[idx].endpoints[2] == 3;
-                s_devices[idx].supported = strcmp(model, AQARA_MODEL_ID) == 0 && eps_ok;
+                s_devices[idx].supported = strcmp(model, AQARA_MODEL_ID) == 0;
                 if (s_devices[idx].supported) {
-                    uint8_t eps[3];
-                    memcpy(eps, s_devices[idx].endpoints, sizeof(eps));
                     save_devices();
                     xSemaphoreGive(s_devices_lock);
-                    ESP_LOGI(TAG, "Supported QBKG25LM discovered at 0x%04x", msg->info.src_address.u.short_addr);
-                    configure_aqara(msg->info.src_address.u.short_addr, eps);
+                    ESP_LOGW(TAG, "QBKG25LM model found at 0x%04x; control remains locked until physical channel mapping is confirmed",
+                             msg->info.src_address.u.short_addr);
                     return;
                 }
-                ESP_LOGW(TAG, "Unsupported/incomplete device 0x%04x model='%s' endpoints=%u/%u/%u",
-                         msg->info.src_address.u.short_addr, model, s_devices[idx].endpoints[0],
-                         s_devices[idx].endpoints[1], s_devices[idx].endpoints[2]);
+                ESP_LOGW(TAG, "Unsupported device 0x%04x model='%s'", msg->info.src_address.u.short_addr, model);
                 save_devices();
             }
             xSemaphoreGive(s_devices_lock);
@@ -316,6 +343,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
                 poll_persisted_devices();
             }
         } else {
+            diagnostics_set_error(TAG, "initialization failed: %s", esp_err_to_name(status));
             esp_zb_scheduler_alarm((esp_zb_callback_t)commissioning_retry, ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
         }
         break;
@@ -325,13 +353,18 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
             ESP_LOGI(TAG, "Formed Zigbee network PAN=0x%04x channel=%u", esp_zb_get_pan_id(), esp_zb_get_current_channel());
             esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
         } else {
+            diagnostics_set_error(TAG, "network formation failed: %s", esp_err_to_name(status));
             esp_zb_scheduler_alarm((esp_zb_callback_t)commissioning_retry, ESP_ZB_BDB_MODE_NETWORK_FORMATION, 1000);
         }
         break;
     case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE: {
         esp_zb_zdo_signal_device_annce_params_t *d = esp_zb_app_signal_get_params(p);
         ESP_LOGI(TAG, "Device announce short=0x%04x", d->device_short_addr);
+#if LIGHTGW_HAS_DISCOVERY
         discover_device(d->device_short_addr, d->ieee_addr);
+#else
+        ESP_LOGI(TAG, "Stage 2 records join only; endpoint discovery is enabled in Stage 3");
+#endif
         break;
     }
     case ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS:
@@ -406,8 +439,53 @@ esp_err_t zigbee_manager_permit_join(uint8_t seconds)
     esp_zb_lock_acquire(portMAX_DELAY);
     esp_err_t err = esp_zb_bdb_open_network(seconds);
     esp_zb_lock_release();
-    if (err == ESP_OK) s_pairing_until_us = esp_timer_get_time() + (int64_t)seconds * 1000000;
+    if (err == ESP_OK) {
+        s_pairing_until_us = esp_timer_get_time() + (int64_t)seconds * 1000000;
+        ESP_LOGI(TAG, "Permit join requested for %u seconds", seconds);
+    } else {
+        diagnostics_set_error(TAG, "permit join failed: %s", esp_err_to_name(err));
+    }
     return err;
+}
+
+esp_err_t zigbee_manager_confirm_mapping(uint16_t short_addr, const uint8_t endpoints[3])
+{
+#if !LIGHTGW_HAS_CONTROL
+    (void)short_addr;
+    (void)endpoints;
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    if (!endpoints || endpoints[0] == endpoints[1] || endpoints[0] == endpoints[2] || endpoints[1] == endpoints[2]) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    bool valid = true;
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    int idx = find_device_by_short(short_addr);
+    if (idx < 0 || !s_devices[idx].supported) {
+        valid = false;
+    } else {
+        for (int ch = 0; ch < 3; ++ch) {
+            bool found = false;
+            for (int i = 0; i < s_devices[idx].onoff_endpoint_count; ++i) {
+                if (s_devices[idx].onoff_endpoints[i] == endpoints[ch]) found = true;
+            }
+            if (!found) valid = false;
+        }
+    }
+    if (valid) {
+        memcpy(s_devices[idx].endpoints, endpoints, 3);
+        s_devices[idx].mapping_confirmed = true;
+        save_devices();
+    }
+    xSemaphoreGive(s_devices_lock);
+    if (!valid) return ESP_ERR_INVALID_ARG;
+    esp_zb_lock_acquire(portMAX_DELAY);
+    configure_aqara(short_addr, endpoints);
+    esp_zb_lock_release();
+    ESP_LOGW(TAG, "Physical mapping confirmed short=0x%04x left=%u center=%u right=%u",
+             short_addr, endpoints[0], endpoints[1], endpoints[2]);
+    return ESP_OK;
+#endif
 }
 
 esp_err_t zigbee_manager_set_channel(uint16_t addr, unsigned channel, bool on)
@@ -416,9 +494,11 @@ esp_err_t zigbee_manager_set_channel(uint16_t addr, unsigned channel, bool on)
     uint8_t ep = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(addr);
-    if (idx >= 0 && s_devices[idx].supported) ep = s_devices[idx].endpoints[channel];
+    if (idx >= 0 && s_devices[idx].supported && s_devices[idx].mapping_confirmed) ep = s_devices[idx].endpoints[channel];
     xSemaphoreGive(s_devices_lock);
     if (!ep) return ESP_ERR_NOT_FOUND;
+    ESP_LOGI(TAG, "Control TX short=0x%04x channel=%u endpoint=%u value=%s",
+             addr, channel, ep, on ? "ON" : "OFF");
     esp_zb_zcl_on_off_cmd_t cmd = {0};
     cmd.zcl_basic_cmd.dst_addr_u.addr_short = addr;
     cmd.zcl_basic_cmd.dst_endpoint = ep;

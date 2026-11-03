@@ -15,11 +15,16 @@ typedef enum {
 typedef struct {
     bool used;
     bool supported;
+    bool mapping_confirmed;
     bool online;
     uint16_t short_addr;
     esp_zb_ieee_addr_t ieee_addr;
     char model[33];
     uint8_t endpoints[3];
+    uint8_t discovered_endpoint_count;
+    uint8_t discovered_endpoints[16];
+    uint8_t onoff_endpoint_count;
+    uint8_t onoff_endpoints[16];
     zb_channel_state_t state[3];
     int8_t last_rssi;
 } zb_device_snapshot_t;
@@ -31,5 +36,6 @@ uint16_t zigbee_manager_pan_id(void);
 int zigbee_manager_pairing_remaining(void);
 esp_err_t zigbee_manager_permit_join(uint8_t seconds);
 esp_err_t zigbee_manager_set_channel(uint16_t short_addr, unsigned channel, bool on);
+esp_err_t zigbee_manager_confirm_mapping(uint16_t short_addr, const uint8_t endpoints[3]);
 esp_err_t zigbee_manager_all_off(void);
 size_t zigbee_manager_snapshot(zb_device_snapshot_t *out, size_t capacity);
