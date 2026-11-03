@@ -2,12 +2,14 @@ set(app_sources
     "main.c"
     "settings.c"
     "wifi_manager.c"
+    "rtc_manager.c"
+    "time_manager.c"
     "web_server.c"
     "diagnostics.c"
 )
 set(app_requires
     esp_coex esp_event esp_http_server esp_netif esp_system esp_timer esp_wifi espcoredump
-    json lwip mbedtls mdns nvs_flash
+    driver json lwip mbedtls mdns nvs_flash
 )
 
 if(LIGHTGW_STAGE GREATER_EQUAL 2)
@@ -23,7 +25,6 @@ if(LIGHTGW_STAGE GREATER_EQUAL 5)
         "ir_transmitter.c"
         "ir_storage.c"
     )
-    list(APPEND app_requires driver)
 endif()
 
 idf_component_register(

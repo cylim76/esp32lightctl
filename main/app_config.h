@@ -16,6 +16,17 @@
 #define APP_NVS_NAMESPACE             "gateway"
 #define APP_TIMEZONE_DEFAULT          "CST-8"
 
+/* DS3231 is optional on every Stage. RTC stores UTC; application uses CST-8. */
+#define APP_RTC_I2C_SDA_GPIO           6
+#define APP_RTC_I2C_SCL_GPIO           7
+#define APP_RTC_I2C_ADDRESS            0x68
+#define APP_RTC_I2C_FREQUENCY_HZ       100000
+#define APP_TIME_MIN_VALID_EPOCH       1793462400LL /* 2026-11-01 00:00:00 CST */
+#define APP_TIME_MAX_VALID_EPOCH       4102444799LL /* 2099-12-31 23:59:59 UTC */
+#define APP_NTP_DAILY_HOUR_LOCAL       2
+#define APP_NTP_RETRY_COUNT            3
+#define APP_NTP_WAIT_SECONDS           15
+
 /* Stage 5 RMT pins: header pins without USB/UART/RGB/strapping conflicts. */
 #define APP_IR_TX_GPIO                 18
 #define APP_IR_RX_GPIO                 19

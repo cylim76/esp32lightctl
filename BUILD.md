@@ -7,7 +7,7 @@
 - ZBOSS `esp-zboss-lib 1.6.4`
 - Espressif mDNS `1.14.1`
 - 目标：`esp32c6`，Flash：8 MB
-- 固件版本：Stage 1～4 保持 `0.4.0-stageN`；Stage 5 为 `0.5.0-stage5`
+- 当前源码固件版本：`0.6.0-stageN`；原 Stage 1～5 已发布镜像保持不变
 
 五个 Stage 使用同一套源码。`LIGHTGW_STAGE` 是 CMake cache 变量，每个 Stage 使用独立的 `build-stageN` 目录和该目录内独立生成的 `sdkconfig`。Stage 5 叠加 `sdkconfig.stage5` 并使用 `partitions_stage5.csv`；Stage 1～4 继续使用原 `partitions.csv`。
 
@@ -76,3 +76,17 @@ Stage 1～4 继续使用原分区表且已发布固件不修改。Stage 5 保持
 | 5 | PASS (BUILD ONLY) | 1,426,352 B (`0x15c3b0`) | `683a732d8467a2e18babc439c0e067b392b325e290ffbd681d220f46cebc53c6` |
 
 Stage 5 最小应用分区为 3,145,728 B（`0x300000`），应用镜像剩余 1,719,376 B（约 55%）。红外收发、空调响应、电源稳定性以及 Wi-Fi/Zigbee/RMT 实际共存仍全部为 `NOT TESTED`。
+
+## 2026-11-03 RTC 与按设备调度版本回归构建
+
+版本 `0.6.0-stageN` 使用 ESP-IDF 5.5.1 对五个独立构建目录执行真实构建，全部退出码为 0。下列哈希对应本地 `build-stageN/esp32c6_light_gateway.bin`；没有覆盖 `firmware/` 中已发布镜像。
+
+| Stage | 结果 | 应用大小 | 应用 SHA-256 |
+|---|---|---:|---|
+| 1 | PASS (BUILD ONLY) | 1,063,488 B (`0x103a40`) | `3d85b8ce7ab9ce2680b63807e0baca20b5d6ffb8f143bc4a730f0014f69a69f4` |
+| 2 | PASS (BUILD ONLY) | 1,422,192 B (`0x15b370`) | `b946b416efcbeb2b1b252520d57178a4b2b5c568360a9c392efaff03a054f118` |
+| 3 | PASS (BUILD ONLY) | 1,424,928 B (`0x15be20`) | `63863a04344e5b2fcbf65770767e0ba2abdd60b6ed35e78b50aa92b960665f33` |
+| 4 | PASS (BUILD ONLY) | 1,434,896 B (`0x15e510`) | `2d768efb3ff2daf6d02904c8dd3dfc9f647cdf804320073cebb31b100f8a0004` |
+| 5 | PASS (BUILD ONLY) | 1,470,848 B (`0x167180`) | `c1a28e4cdccdb67f52dfd4402ff1ec843efd1f17438fcb77d2385bd903a5c75a` |
+
+同时执行 `tests/check_web_js.js` 及 `tests/simulate_time_scheduler.py`，网页脚本解析和 A～L 状态机情景均为 `SIMULATED PASS`。这些结果不是开发板、DS3231、QBKG25LM 或 LG 空调的硬件 PASS。

@@ -32,7 +32,9 @@
 - Coordinator 建网、180 秒允许入网、设备 announce、Active Endpoint/Simple Descriptor/model 发现。
 - Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
 - Zigbee 栈网络数据保存在 `zb_storage` 分区；应用设备表、Wi-Fi 和定时设置保存在 NVS。
-- 最多 8 条按星期自动全部关灯计划，每条可独立启用；仅在 Wi-Fi 在线并在本次连接中 NTP 同步成功后执行。断网时跳过，不补发。
+- 左/中/右、全部灯光、空调 1、空调 2、空调组各自最多 8 条计划；每条保存目标、启用状态、时分、星期、有限重试及补执行窗口。灯光使用目标端点的明确 OFF，空调只重放已确认保存的 OFF 学习码。
+- DS3231 可选 RTC 使用原生 I²C 驱动，检查 OSF 后才恢复 UTC。系统时间一经 RTC、NTP 或管理员手动设置验证有效，不会因 Wi-Fi 离线而过期；每天北京时间 02:00 尝试 NTP，并在成功后回写 RTC。
+- Web 时间管理区显示北京时间、UTC、来源、有效性、RTC/OSF、最近及下次 NTP；管理员可在无互联网时手动设置 ESP32 与在线的 DS3231。
 - 默认定时关闭，启动/重启不会主动改变继电器状态。
 - Stage 5 使用 ESP-IDF 原生 RMT：GPIO19 学习解调后的原始 mark/space，连续三次稳定后才允许确认；GPIO18 通过异步队列重放，支持两组关机码、可调载波/占空比和独立空调定时。
 - 红外码存放于 Stage 5 专用 64KB NVS 分区。38kHz 是默认配置/估计值，不会被标记为接收头实测载波；页面严格区分“任务已提交”“RMT 已发送”和“空调实际状态未知”。
@@ -45,10 +47,12 @@ main/
   stage_config.h         单源码 Stage 1～5 功能边界
   diagnostics.c          运行时间、Heap、复位和最近错误诊断
   settings.c             NVS、PBKDF2 管理密码、定时配置
-  wifi_manager.c         首次/重新配网、DHCP、mDNS、STA 重连、NTP
+  wifi_manager.c         首次/重新配网、DHCP、mDNS、STA 重连
+  rtc_manager.c          DS3231 I2C、UTC 读写和 OSF 检查
+  time_manager.c         北京时间、NTP、RTC/手动时间来源和有效性
   web_server.c           鉴权 HTTP API
   zigbee_manager.c       Coordinator、发现、Aqara 协议、状态同步
-  scheduler.c            每周定时自动关闭
+  scheduler.c            按设备每周关闭、有限重试/补执行和每日状态
   ir_receiver.c          RMT RX、长帧采集、LG 候选识别
   ir_transmitter.c       RMT TX、载波、原始码重放和安全限制
   ir_storage.c           两组红外码与空调定时的独立 NVS
@@ -99,7 +103,7 @@ Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-li
 
 ### 本地编译验证记录
 
-2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～5 执行了真实 `idf.py build`。构建结果、应用大小及最终 SHA-256 记录在 [BUILD.md](BUILD.md) 和 [firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt)。这些结果只证明编译与链接通过，不代表硬件测试通过。
+2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～5 执行了真实 `idf.py build`。当前源码的构建结果、应用大小及 SHA-256 记录在 [BUILD.md](BUILD.md)；[firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt) 仅对应未改写的既有发布镜像。这些结果只证明编译与链接通过，不代表硬件测试通过。
 
 ## USB 烧录与监控
 
@@ -167,7 +171,7 @@ idf.py -p COM7 erase-flash flash monitor
 5. 保存 Stage 3 完整日志，确认三个 On/Off server 端点及其与左/中/右继电器的实际对应关系。仅在 Stage 4 页面再次输入并明确确认该映射后，开关控件才会解锁。
 6. 用实体按键切换三路，确认页面在数秒内随 `0x0006/OnOff` 属性报告更新。
 7. 断开 ESP32 USB 电源 30 秒再上电：确认 PAN ID/设备仍在、不自动改变灯状态，并能重新读取三路状态。
-8. 配置多条关灯时间（例如每天 17:00、19:30、20:30、21:30、23:59），逐条确认当天仅执行一次；断开办公室网络后跨过定时时刻，确认不执行且联网后不补发。
+8. 配置多条关灯时间（例如每天 17:00、19:30、20:30、21:30、23:59），逐条确认当天仅执行一次；获得可信时间后断开办公室网络，确认计划继续按北京时间执行。没有可信 RTC/NTP/手动时间时必须跳过。
 9. 连续执行至少 200 次三路切换，同时对网页做刷新/局域网 ping；记录命令超时、Zigbee 重试、Wi-Fi 断线和 coredump。
 
 ## 无线共存验证建议
@@ -198,5 +202,7 @@ idf.py -p COM7 erase-flash flash monitor
 遇到问题请保留从复位开始的完整 `idf.py monitor` 日志，尤其是 Zigbee announce、Simple Descriptor、read/report response、Wi-Fi disconnect reason 和 backtrace。
 
 Stage 5 的低压接线、电源边界和红外硬件验证分别见 [IR_WIRING.md](IR_WIRING.md) 与 [IR_TEST_PLAN.md](IR_TEST_PLAN.md)。红外模块未经实物验证；LG 协议识别结果只是候选判断，最终必须以学习码重放和空调实际响应为准。
+
+DS3231 接线、电平风险、UTC/北京时间规则及手动设置流程见 [RTC_TIME.md](RTC_TIME.md)。不同成品模块的上拉和充电电路并不相同，连接前必须检查，RTC 功能目前仅完成软件构建与模拟验证。
 
 统一硬件验证状态见 [HARDWARE_TEST_RECORD.md](HARDWARE_TEST_RECORD.md)。开发板到货前全部硬件测试均保持 `NOT TESTED`，不得因固件成功生成而改成 `PASS`。

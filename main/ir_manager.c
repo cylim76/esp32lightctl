@@ -15,7 +15,7 @@
 #include "ir_storage.h"
 #include "ir_transmitter.h"
 #include "settings.h"
-#include "wifi_manager.h"
+#include "time_manager.h"
 
 #define IR_TX_QUEUE_DEPTH 4
 #define IR_LEARN_MAX_ATTEMPTS 8
@@ -67,7 +67,7 @@ static void set_last_result(const char *message, uint8_t slot_mask)
     strlcpy(s_status.last_send_result, message, sizeof(s_status.last_send_result));
     s_status.last_send_slot_mask = slot_mask;
     s_status.last_send_uptime_seconds = esp_timer_get_time() / 1000000;
-    if (wifi_manager_time_is_synced()) {
+    if (time_manager_is_valid()) {
         time_t now;
         time(&now);
         s_status.last_send_epoch = now;
@@ -175,9 +175,18 @@ static void evaluate_schedule(void)
         portEXIT_CRITICAL(&s_lock);
         return;
     }
+    const app_settings_t *settings = settings_get();
+    for (size_t i = 0; i < settings->schedule_count; ++i) {
+        if (settings->schedules[i].target >= SCHEDULE_TARGET_AC_1) {
+            portENTER_CRITICAL(&s_lock);
+            strlcpy(s_status.schedule_skip_reason, "legacy IR schedule superseded by per-device AC schedules",
+                    sizeof(s_status.schedule_skip_reason));
+            portEXIT_CRITICAL(&s_lock);
+            return;
+        }
+    }
     const char *reason = NULL;
-    if (!wifi_manager_is_connected()) reason = "skipped: Wi-Fi disconnected";
-    else if (!wifi_manager_time_is_synced()) reason = "skipped: NTP time not synchronized";
+    if (!time_manager_is_valid()) reason = "skipped: trusted system time unavailable";
     if (reason) {
         portENTER_CRITICAL(&s_lock);
         strlcpy(s_status.schedule_skip_reason, reason, sizeof(s_status.schedule_skip_reason));
@@ -191,10 +200,10 @@ static void evaluate_schedule(void)
     int64_t key = minute_key(&local);
     bool due = false;
     if (schedule.use_light_schedules) {
-        const app_settings_t *settings = settings_get();
         for (size_t i = 0; i < settings->schedule_count; ++i) {
             const app_schedule_entry_t *entry = &settings->schedules[i];
-            if (entry->enabled && (entry->days & (1U << local.tm_wday)) &&
+            if (entry->enabled && entry->target <= SCHEDULE_TARGET_LIGHT_ALL &&
+                (entry->days & (1U << local.tm_wday)) &&
                 entry->hour == local.tm_hour && entry->minute == local.tm_min) {
                 due = true;
                 break;

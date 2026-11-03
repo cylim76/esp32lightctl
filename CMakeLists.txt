@@ -13,11 +13,7 @@ if(LIGHTGW_STAGE EQUAL 5)
 else()
     set(SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
 endif()
-if(LIGHTGW_STAGE EQUAL 5)
-    set(PROJECT_VER "0.5.0-stage5")
-else()
-    set(PROJECT_VER "0.4.0-stage${LIGHTGW_STAGE}")
-endif()
+set(PROJECT_VER "0.6.0-stage${LIGHTGW_STAGE}")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Only traverse the application and its declared dependency graph. Besides

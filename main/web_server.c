@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "cJSON.h"
 #include "diagnostics.h"
 #include "esp_check.h"
@@ -14,7 +15,11 @@
 #include "mbedtls/base64.h"
 #include "settings.h"
 #include "stage_config.h"
+#include "time_manager.h"
 #include "wifi_manager.h"
+#if LIGHTGW_HAS_SCHEDULER
+#include "scheduler.h"
+#endif
 #if LIGHTGW_HAS_IR
 #include "app_config.h"
 #include "ir_manager.h"
@@ -73,7 +78,8 @@ denied:
 
 static cJSON *receive_json(httpd_req_t *req)
 {
-    if (req->content_len <= 0 || req->content_len > 2048) return NULL;
+    /* Seven targets with eight schedules each can legitimately exceed 2 KiB. */
+    if (req->content_len <= 0 || req->content_len > 16384) return NULL;
     char *body = calloc(1, req->content_len + 1);
     if (!body) return NULL;
     int total = 0;
@@ -121,7 +127,33 @@ static esp_err_t status_get(httpd_req_t *req)
     char last_error[160];
     diagnostics_get_last_error(last_error, sizeof(last_error));
     cJSON_AddStringToObject(root, "last_error", last_error);
-    cJSON_AddBoolToObject(root, "time_synced", wifi_manager_time_is_synced());
+    time_manager_status_t time_status;
+    time_manager_get_status(&time_status);
+    cJSON_AddBoolToObject(root, "time_synced", time_status.valid);
+    cJSON *time_json = cJSON_AddObjectToObject(root, "time");
+    cJSON_AddBoolToObject(time_json, "valid", time_status.valid);
+    cJSON_AddStringToObject(time_json, "source", time_manager_source_name(time_status.source));
+    cJSON_AddStringToObject(time_json, "timezone", time_status.timezone);
+    cJSON_AddNumberToObject(time_json, "now_utc_epoch", time_status.now_utc);
+    char local_text[32] = "INVALID", utc_text[32] = "INVALID";
+    if (time_status.valid) {
+        struct tm value;
+        localtime_r(&time_status.now_utc, &value);
+        strftime(local_text, sizeof(local_text), "%Y-%m-%d %H:%M:%S", &value);
+        gmtime_r(&time_status.now_utc, &value);
+        strftime(utc_text, sizeof(utc_text), "%Y-%m-%d %H:%M:%S", &value);
+    }
+    cJSON_AddStringToObject(time_json, "local", local_text);
+    cJSON_AddStringToObject(time_json, "utc", utc_text);
+    cJSON_AddBoolToObject(time_json, "rtc_initialized", time_status.rtc_initialized);
+    cJSON_AddBoolToObject(time_json, "rtc_online", time_status.rtc_online);
+    cJSON_AddBoolToObject(time_json, "rtc_osf", time_status.rtc_osf);
+    cJSON_AddNumberToObject(time_json, "rtc_status_register", time_status.rtc_status_register);
+    cJSON_AddNumberToObject(time_json, "last_ntp_sync", time_status.last_ntp_sync);
+    cJSON_AddNumberToObject(time_json, "next_ntp_sync", time_status.next_ntp_sync);
+    cJSON_AddBoolToObject(time_json, "ntp_in_progress", time_status.ntp_in_progress);
+    cJSON_AddStringToObject(time_json, "last_ntp_result", time_status.last_ntp_result);
+    cJSON_AddStringToObject(time_json, "last_error", time_status.last_error);
 #if LIGHTGW_HAS_ZIGBEE
     cJSON_AddBoolToObject(root, "zigbee_ready", zigbee_manager_network_ready());
     cJSON_AddNumberToObject(root, "zigbee_channel", zigbee_manager_channel());
@@ -137,15 +169,39 @@ static esp_err_t status_get(httpd_req_t *req)
     const app_settings_t *cfg = settings_get();
     cJSON_AddStringToObject(root, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(root, "max_schedules", APP_MAX_SCHEDULES);
+    cJSON_AddNumberToObject(root, "max_schedules_per_target", APP_MAX_SCHEDULES_PER_TARGET);
     cJSON *schedules = cJSON_AddArrayToObject(root, "schedules");
     for (size_t i = 0; i < cfg->schedule_count && i < APP_MAX_SCHEDULES; ++i) {
         cJSON *entry = cJSON_CreateObject();
         cJSON_AddBoolToObject(entry, "enabled", cfg->schedules[i].enabled != 0);
+        cJSON_AddNumberToObject(entry, "target", cfg->schedules[i].target);
         cJSON_AddNumberToObject(entry, "hour", cfg->schedules[i].hour);
         cJSON_AddNumberToObject(entry, "minute", cfg->schedules[i].minute);
         cJSON_AddNumberToObject(entry, "days", cfg->schedules[i].days);
+        cJSON_AddNumberToObject(entry, "retry_count", cfg->schedules[i].retry_count);
+        cJSON *offsets = cJSON_AddArrayToObject(entry, "retry_offsets");
+        for (size_t retry = 0; retry < cfg->schedules[i].retry_count; ++retry) {
+            cJSON_AddItemToArray(offsets, cJSON_CreateNumber(cfg->schedules[i].retry_offsets_minutes[retry]));
+        }
+        cJSON_AddNumberToObject(entry, "catchup_window", cfg->schedules[i].catchup_window_minutes);
         cJSON_AddItemToArray(schedules, entry);
     }
+#if LIGHTGW_HAS_SCHEDULER
+    scheduler_status_t scheduler;
+    scheduler_get_status(&scheduler);
+    cJSON *scheduler_json = cJSON_AddObjectToObject(root, "scheduler");
+    cJSON_AddNumberToObject(scheduler_json, "next_close", scheduler.next_schedule_epoch);
+    cJSON_AddNumberToObject(scheduler_json, "last_action", scheduler.last_action_epoch);
+    cJSON_AddStringToObject(scheduler_json, "last_result", scheduler.last_result);
+    cJSON *logs = cJSON_AddArrayToObject(scheduler_json, "logs");
+    for (size_t i = 0; i < scheduler.log_count; ++i) {
+        cJSON *log = cJSON_CreateObject();
+        cJSON_AddNumberToObject(log, "epoch", scheduler.logs[i].epoch);
+        cJSON_AddNumberToObject(log, "schedule_index", scheduler.logs[i].schedule_index);
+        cJSON_AddStringToObject(log, "message", scheduler.logs[i].message);
+        cJSON_AddItemToArray(logs, log);
+    }
+#endif
 
     cJSON_AddArrayToObject(root, "devices");
 #if LIGHTGW_HAS_ZIGBEE
@@ -277,6 +333,36 @@ static esp_err_t wifi_reconfigure_post(httpd_req_t *req)
     httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true}");
     xTaskCreate(restart_task, "restart", 2048, NULL, 3, NULL);
     return ESP_OK;
+}
+
+static esp_err_t time_ntp_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    esp_err_t err = time_manager_request_ntp();
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"NTP synchronization queued\"}") :
+                           send_json_error(req, "409 Conflict", esp_err_to_name(err));
+}
+
+static esp_err_t time_manual_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    const char *names[] = {"year", "month", "day", "hour", "minute", "second"};
+    int values[6];
+    bool valid = j != NULL;
+    for (size_t i = 0; i < 6 && valid; ++i) {
+        cJSON *item = cJSON_GetObjectItem(j, names[i]);
+        valid = cJSON_IsNumber(item) && item->valuedouble == item->valueint;
+        if (valid) values[i] = item->valueint;
+    }
+    if (!valid) {
+        cJSON_Delete(j);
+        return send_json_error(req, "400 Bad Request", "year/month/day/hour/minute/second integers required");
+    }
+    esp_err_t err = time_manager_set_local(values[0], values[1], values[2], values[3], values[4], values[5]);
+    cJSON_Delete(j);
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"ESP32 time set; inspect RTC status for DS3231 write result\"}") :
+                           send_json_error(req, "400 Bad Request", esp_err_to_name(err));
 }
 
 #if LIGHTGW_HAS_ZIGBEE
@@ -442,19 +528,46 @@ static esp_err_t schedule_post(httpd_req_t *req)
     for (int i = 0; i < count; ++i) {
         cJSON *item = cJSON_GetArrayItem(items, i);
         cJSON *enabled = cJSON_GetObjectItem(item, "enabled");
+        cJSON *target = cJSON_GetObjectItem(item, "target");
         cJSON *hour = cJSON_GetObjectItem(item, "hour");
         cJSON *minute = cJSON_GetObjectItem(item, "minute");
         cJSON *days = cJSON_GetObjectItem(item, "days");
-        if (!cJSON_IsBool(enabled) || !cJSON_IsNumber(hour) || !cJSON_IsNumber(minute) ||
-            !cJSON_IsNumber(days) || hour->valuedouble != hour->valueint ||
+        cJSON *retry_count = cJSON_GetObjectItem(item, "retry_count");
+        cJSON *retry_offsets = cJSON_GetObjectItem(item, "retry_offsets");
+        cJSON *catchup = cJSON_GetObjectItem(item, "catchup_window");
+        if (!cJSON_IsBool(enabled) || !cJSON_IsNumber(target) || !cJSON_IsNumber(hour) ||
+            !cJSON_IsNumber(minute) || !cJSON_IsNumber(days) || !cJSON_IsNumber(retry_count) ||
+            !cJSON_IsArray(retry_offsets) || !cJSON_IsNumber(catchup) ||
+            target->valuedouble != target->valueint || hour->valuedouble != hour->valueint ||
             minute->valuedouble != minute->valueint || days->valuedouble != days->valueint ||
-            hour->valueint < 0 || hour->valueint > 23 || minute->valueint < 0 ||
-            minute->valueint > 59 || days->valueint < 0 || days->valueint > 127) {
+            retry_count->valuedouble != retry_count->valueint || catchup->valuedouble != catchup->valueint ||
+            target->valueint < 0 || target->valueint >= APP_SCHEDULE_TARGET_COUNT ||
+#if !LIGHTGW_HAS_IR
+            target->valueint >= SCHEDULE_TARGET_AC_1 ||
+#endif
+            hour->valueint < 0 || hour->valueint > 23 || minute->valueint < 0 || minute->valueint > 59 ||
+            days->valueint < 0 || days->valueint > 127 || retry_count->valueint < 0 ||
+            retry_count->valueint > APP_MAX_SCHEDULE_RETRIES ||
+            cJSON_GetArraySize(retry_offsets) != retry_count->valueint || catchup->valueint < 0 || catchup->valueint > 180) {
             cJSON_Delete(j);
-            return send_json_error(req, "400 Bad Request", "Each schedule requires enabled/hour/minute/days");
+            return send_json_error(req, "400 Bad Request", "Invalid per-device schedule");
         }
-        entries[i] = (app_schedule_entry_t){cJSON_IsTrue(enabled), hour->valueint,
-                                             minute->valueint, days->valueint};
+        entries[i].enabled = cJSON_IsTrue(enabled);
+        entries[i].target = target->valueint;
+        entries[i].hour = hour->valueint;
+        entries[i].minute = minute->valueint;
+        entries[i].days = days->valueint;
+        entries[i].retry_count = retry_count->valueint;
+        entries[i].catchup_window_minutes = catchup->valueint;
+        for (size_t retry = 0; retry < entries[i].retry_count; ++retry) {
+            cJSON *offset = cJSON_GetArrayItem(retry_offsets, retry);
+            if (!cJSON_IsNumber(offset) || offset->valuedouble != offset->valueint ||
+                offset->valueint < 1 || offset->valueint > 180) {
+                cJSON_Delete(j);
+                return send_json_error(req, "400 Bad Request", "Invalid retry offset");
+            }
+            entries[i].retry_offsets_minutes[retry] = offset->valueint;
+        }
     }
     esp_err_t err = settings_save_schedules(entries, count, tz->valuestring);
     cJSON_Delete(j);
@@ -465,7 +578,7 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 18;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
@@ -473,6 +586,8 @@ esp_err_t web_server_start(void)
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get},
         {.uri = "/api/provision", .method = HTTP_POST, .handler = provision_post},
         {.uri = "/api/wifi/reconfigure", .method = HTTP_POST, .handler = wifi_reconfigure_post},
+        {.uri = "/api/time/ntp", .method = HTTP_POST, .handler = time_ntp_post},
+        {.uri = "/api/time/manual", .method = HTTP_POST, .handler = time_manual_post},
 #if LIGHTGW_HAS_ZIGBEE
         {.uri = "/api/pair", .method = HTTP_POST, .handler = pair_post},
 #endif

@@ -10,7 +10,6 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
-#include "esp_netif_sntp.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -18,9 +17,9 @@
 #include "freertos/event_groups.h"
 #include "mdns.h"
 #include "settings.h"
+#include "time_manager.h"
 
 #define WIFI_CONNECTED_BIT BIT0
-#define TIME_SYNCED_BIT     BIT1
 
 static const char *TAG = "wifi";
 static EventGroupHandle_t s_events;
@@ -28,7 +27,6 @@ static char s_ip[16] = "0.0.0.0";
 static char s_ap_ssid[33];
 static char s_ap_password[17];
 static bool s_provisioning;
-static bool s_sntp_started;
 static bool s_mdns_started;
 static unsigned s_retry;
 static esp_timer_handle_t s_retry_timer;
@@ -62,22 +60,6 @@ static void retry_timer_cb(void *arg)
     esp_wifi_connect();
 }
 
-static void time_sync_cb(struct timeval *tv)
-{
-    (void)tv;
-    xEventGroupSetBits(s_events, TIME_SYNCED_BIT);
-    ESP_LOGI(TAG, "NTP time synchronized");
-}
-
-static void start_sntp_once(void)
-{
-    if (s_sntp_started) return;
-    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(2,
-        ESP_SNTP_SERVER_LIST("pool.ntp.org", "time.cloudflare.com"));
-    config.sync_cb = time_sync_cb;
-    if (esp_netif_sntp_init(&config) == ESP_OK) s_sntp_started = true;
-}
-
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
@@ -85,7 +67,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *event = data;
-        xEventGroupClearBits(s_events, WIFI_CONNECTED_BIT | TIME_SYNCED_BIT);
+        xEventGroupClearBits(s_events, WIFI_CONNECTED_BIT);
         strlcpy(s_ip, "0.0.0.0", sizeof(s_ip));
         unsigned backoff_ms = 1000U << (s_retry < 5 ? s_retry : 5);
         ++s_retry;
@@ -101,7 +83,6 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         xEventGroupSetBits(s_events, WIFI_CONNECTED_BIT);
         ESP_LOGI(TAG, "Wi-Fi connected, IP: %s (DHCP)", s_ip);
         start_mdns_once();
-        start_sntp_once();
     }
 }
 
@@ -174,7 +155,7 @@ bool wifi_manager_is_provisioning(void) { return s_provisioning; }
 
 bool wifi_manager_time_is_synced(void)
 {
-    return s_events && (xEventGroupGetBits(s_events) & TIME_SYNCED_BIT);
+    return time_manager_is_valid();
 }
 
 void wifi_manager_get_ip(char *out, size_t out_len)

@@ -11,6 +11,7 @@
 #include "scheduler.h"
 #endif
 #include "settings.h"
+#include "time_manager.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #if LIGHTGW_HAS_ZIGBEE
@@ -33,15 +34,16 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(wifi_manager_start());
+    ESP_ERROR_CHECK(time_manager_start());
     ESP_ERROR_CHECK(web_server_start());
 #if LIGHTGW_HAS_ZIGBEE
     ESP_ERROR_CHECK(zigbee_manager_start());
 #endif
-#if LIGHTGW_HAS_SCHEDULER
-    ESP_ERROR_CHECK(scheduler_start());
-#endif
 #if LIGHTGW_HAS_IR
     ESP_ERROR_CHECK(ir_manager_start());
+#endif
+#if LIGHTGW_HAS_SCHEDULER
+    ESP_ERROR_CHECK(scheduler_start());
 #endif
     ESP_LOGI(TAG, "ESP32-C6 standalone light gateway Stage %d started", LIGHTGW_STAGE);
 }
