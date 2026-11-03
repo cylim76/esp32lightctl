@@ -75,6 +75,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
                  event ? event->reason : 0, s_retry, backoff_ms);
         if (s_mdns_started) ESP_LOGI(TAG, "mDNS remains registered and will follow the STA reconnect/IP change");
         diagnostics_set_error(TAG, "disconnected reason=%u", event ? event->reason : 0);
+        diagnostics_record_memory_event("wifi_disconnected");
         if (!esp_timer_is_active(s_retry_timer)) esp_timer_start_once(s_retry_timer, (uint64_t)backoff_ms * 1000);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = data;
@@ -83,6 +84,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         xEventGroupSetBits(s_events, WIFI_CONNECTED_BIT);
         ESP_LOGI(TAG, "Wi-Fi connected, IP: %s (DHCP)", s_ip);
         start_mdns_once();
+        diagnostics_record_memory_event("wifi_got_ip");
     }
 }
 
@@ -143,7 +145,9 @@ esp_err_t wifi_manager_start(void)
 
     const app_settings_t *cfg = settings_get();
     ESP_RETURN_ON_ERROR(cfg->wifi_configured ? start_sta(cfg) : start_provision_ap(), TAG, "Wi-Fi configuration");
-    return esp_wifi_start();
+    esp_err_t err = esp_wifi_start();
+    if (err == ESP_OK) diagnostics_record_memory_event("wifi_started");
+    return err;
 }
 
 bool wifi_manager_is_connected(void)

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include "app_config.h"
+#include "diagnostics.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -100,10 +101,12 @@ static void set_last_result(const char *message, uint8_t slot_mask)
 static void learning_task(void *arg)
 {
     uint8_t slot = (uintptr_t)arg;
+    diagnostics_record_memory_event("ir_learn_task_start");
     esp_err_t err = ir_receiver_open();
     ir_code_t *average = calloc(1, sizeof(*average));
     ir_code_t *sample = malloc(sizeof(*sample));
     if (!average || !sample) err = ESP_ERR_NO_MEM;
+    diagnostics_record_memory_event("ir_learn_buffers_ready");
     unsigned stable = 0;
     unsigned attempts = 0;
     while (err == ESP_OK && stable < IR_CAPTURE_REQUIRED && attempts < IR_LEARN_MAX_ATTEMPTS) {
@@ -112,6 +115,7 @@ static void learning_task(void *arg)
                  slot + 1, stable + 1, IR_CAPTURE_REQUIRED, attempts, IR_LEARN_MAX_ATTEMPTS);
         err = ir_receiver_capture(sample, IR_CAPTURE_TIMEOUT_MS);
         if (err != ESP_OK) break;
+        diagnostics_record_memory_event("ir_learn_capture");
         if (stable == 0 || !codes_similar(average, sample)) {
             if (stable) ESP_LOGW(TAG, "Capture differs from prior samples; stability count restarted");
             *average = *sample;
@@ -152,6 +156,7 @@ static void learning_task(void *arg)
     }
     free(sample);
     free(average);
+    diagnostics_record_memory_event("ir_learn_task_end");
     vTaskDelete(NULL);
 }
 
@@ -240,6 +245,7 @@ static void tx_task(void *arg)
     for (;;) {
         ir_tx_job_t job;
         if (xQueueReceive(s_tx_queue, &job, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            diagnostics_record_memory_event("ir_tx_start");
             update_task(job.id, IR_TASK_TRANSMITTING, "RMT transmission in progress", false);
             portENTER_CRITICAL(&s_lock);
             s_status.transmitting = true;
@@ -273,6 +279,7 @@ static void tx_task(void *arg)
             portENTER_CRITICAL(&s_lock);
             s_status.transmitting = false;
             portEXIT_CRITICAL(&s_lock);
+            diagnostics_record_memory_event("ir_tx_end");
         }
     }
 }
@@ -310,6 +317,7 @@ esp_err_t ir_manager_start_learning(uint8_t slot)
     s_status.attempts = 0;
     s_status.candidate_ready = false;
     portEXIT_CRITICAL(&s_lock);
+    diagnostics_record_memory_event("ir_learn_requested");
     if (xTaskCreate(learning_task, "ir_learning", 6144, (void *)(uintptr_t)slot, 4, NULL) != pdPASS) {
         portENTER_CRITICAL(&s_lock);
         s_status.learning = false;

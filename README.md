@@ -40,6 +40,7 @@
 - 默认定时关闭，启动/重启不会主动改变继电器状态。
 - Stage 5 使用 ESP-IDF 原生 RMT：GPIO19 学习解调后的原始 mark/space，连续三次稳定后才允许确认；GPIO18 通过异步队列重放，支持两组关机码、可调载波/占空比和独立空调定时。
 - 红外码存放于 Stage 5 专用 64KB NVS 分区。38kHz 是默认配置/估计值，不会被标记为接收头实测载波；页面严格区分“任务已提交”“RMT 已发送”和“空调实际状态未知”。
+- Web 诊断页显示 Free Heap、Minimum Free Heap、Largest Free Block、每个 FreeRTOS 任务的 Stack High Water Mark，以及固定容量的关键内存事件；每 60 秒也会把资源摘要写入串口日志。
 
 ## 工程结构
 
@@ -47,7 +48,7 @@
 main/
   main.c                 初始化顺序
   stage_config.h         单源码 Stage 1～5 功能边界
-  diagnostics.c          运行时间、Heap、复位和最近错误诊断
+  diagnostics.c          Heap、任务栈、关键内存事件、复位和最近错误诊断
   settings.c             NVS、PBKDF2 管理密码、定时配置
   wifi_manager.c         首次/重新配网、DHCP、mDNS、STA 重连
   rtc_manager.c          DS3231 I2C、UTC 读写和 OSF 检查
@@ -111,6 +112,8 @@ Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-li
 2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～5 执行了真实 `idf.py build`。当前源码的构建结果、应用大小及 SHA-256 记录在 [BUILD.md](BUILD.md)；[firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt) 仅对应未改写的既有发布镜像。这些结果只证明编译与链接通过，不代表硬件测试通过。
 
 Phase A 的控制边界见 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [DEVICE_CONTROL.md](DEVICE_CONTROL.md)。可烧录 C 测试工程位于 `tests/phase_a_app`。
+
+Stage 1～5 的 `idf.py size` / `size-components` 结果、运行时内存测试方法、Stage 6 RainMaker 前基线与 8 MB 双 OTA 候选规划见 [MEMORY_RESOURCE_REPORT.md](MEMORY_RESOURCE_REPORT.md)。可用 `memory-report.bat N` 重跑指定 Stage。静态构建结果不代表运行时内存余量已经通过硬件验证。
 
 ## USB 烧录与监控
 

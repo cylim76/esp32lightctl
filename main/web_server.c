@@ -123,6 +123,8 @@ static esp_err_t index_get(httpd_req_t *req)
 static esp_err_t status_get(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
+    diagnostics_heap_t heap;
+    diagnostics_get_heap(&heap);
     cJSON *root = cJSON_CreateObject();
     char ip[16], mac[18];
     wifi_manager_get_ip(ip, sizeof(ip));
@@ -140,8 +142,9 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddStringToObject(root, "mdns_hostname", wifi_manager_mdns_hostname());
     cJSON_AddBoolToObject(root, "mdns_active", wifi_manager_mdns_active());
     cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000);
-    cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
-    cJSON_AddNumberToObject(root, "minimum_free_heap", esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(root, "free_heap", heap.free_heap);
+    cJSON_AddNumberToObject(root, "minimum_free_heap", heap.minimum_free_heap);
+    cJSON_AddNumberToObject(root, "largest_free_block", heap.largest_free_block);
     cJSON_AddStringToObject(root, "reset_reason", diagnostics_reset_reason());
     char last_error[160];
     diagnostics_get_last_error(last_error, sizeof(last_error));
@@ -313,6 +316,57 @@ static esp_err_t status_get(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     esp_err_t err = httpd_resp_sendstr(req, text);
+    free(text);
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t resources_get(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    diagnostics_refresh_task_stats();
+    diagnostics_heap_t heap;
+    diagnostics_get_heap(&heap);
+    bool truncated = false, enabled = false;
+    size_t task_count = diagnostics_task_count(&truncated, &enabled);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddTrueToObject(root, "ok");
+    cJSON_AddNumberToObject(root, "free_heap", heap.free_heap);
+    cJSON_AddNumberToObject(root, "minimum_free_heap", heap.minimum_free_heap);
+    cJSON_AddNumberToObject(root, "largest_free_block", heap.largest_free_block);
+    cJSON_AddBoolToObject(root, "task_monitor_enabled", enabled);
+    cJSON_AddBoolToObject(root, "tasks_truncated", truncated);
+    cJSON *tasks = cJSON_AddArrayToObject(root, "tasks");
+    for (size_t i = 0; i < task_count; ++i) {
+        diagnostics_task_stat_t stat;
+        if (!diagnostics_get_task_stat(i, &stat)) continue;
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "name", stat.name);
+        cJSON_AddStringToObject(item, "state", stat.state);
+        cJSON_AddNumberToObject(item, "stack_high_water_words", stat.stack_high_water_words);
+        cJSON_AddNumberToObject(item, "stack_high_water_bytes", stat.stack_high_water_bytes);
+        cJSON_AddNumberToObject(item, "priority", stat.priority);
+        cJSON_AddNumberToObject(item, "core_id", stat.core_id);
+        cJSON_AddItemToArray(tasks, item);
+    }
+    cJSON *events = cJSON_AddArrayToObject(root, "memory_events");
+    size_t event_count = diagnostics_memory_event_count();
+    for (size_t i = 0; i < event_count; ++i) {
+        diagnostics_memory_event_t event;
+        if (!diagnostics_get_memory_event(i, &event)) continue;
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "name", event.name);
+        cJSON_AddNumberToObject(item, "uptime_ms", event.uptime_ms);
+        cJSON_AddNumberToObject(item, "free_heap", event.heap.free_heap);
+        cJSON_AddNumberToObject(item, "minimum_free_heap", event.heap.minimum_free_heap);
+        cJSON_AddNumberToObject(item, "largest_free_block", event.heap.largest_free_block);
+        cJSON_AddItemToArray(events, item);
+    }
+    char *text = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = text ? httpd_resp_sendstr(req, text) : ESP_ERR_NO_MEM;
     free(text);
     cJSON_Delete(root);
     return err;
@@ -616,12 +670,13 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 19;
+    cfg.max_uri_handlers = 20;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
         {.uri = "/", .method = HTTP_GET, .handler = index_get},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get},
+        {.uri = "/api/diagnostics/resources", .method = HTTP_GET, .handler = resources_get},
         {.uri = "/api/provision", .method = HTTP_POST, .handler = provision_post},
         {.uri = "/api/wifi/reconfigure", .method = HTTP_POST, .handler = wifi_reconfigure_post},
         {.uri = "/api/time/ntp", .method = HTTP_POST, .handler = time_ntp_post},

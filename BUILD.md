@@ -7,7 +7,7 @@
 - ZBOSS `esp-zboss-lib 1.6.4`
 - Espressif mDNS `1.14.1`
 - 目标：`esp32c6`，Flash：8 MB
-- 当前源码固件版本：`0.7.0-stageN`；原 Stage 1～5 已发布镜像保持不变
+- 当前源码固件版本：`0.8.0-stageN`；原 Stage 1～5 已发布镜像保持不变
 
 五个 Stage 使用同一套源码。`LIGHTGW_STAGE` 是 CMake cache 变量，每个 Stage 使用独立的 `build-stageN` 目录和该目录内独立生成的 `sdkconfig`。Stage 5 叠加 `sdkconfig.stage5` 并使用 `partitions_stage5.csv`；Stage 1～4 继续使用原 `partitions.csv`。
 
@@ -108,3 +108,17 @@ Stage 5 最小应用分区为 3,145,728 B（`0x300000`），应用镜像剩余 1
 QEMU 命令需要先安装 ESP-IDF 可选的 `qemu-riscv32` 工具，然后使用独立 `build-qemu` 目录；该模拟只验证与芯片无关的 C 状态逻辑，不验证 C6 外设或无线行为。
 
 软件侧另有：网页内联 JavaScript 解析 `SIMULATED PASS`；时间/调度 A～L、每目标 8 条/总计 56 条、v2 迁移模型均为 `SIMULATED PASS`。所有 Zigbee、RMT、DS3231 和 RF 实物行为仍为 `NOT TESTED`。
+
+## 2026-11-03 资源监控版本回归
+
+版本 `0.8.0-stageN` 在五个独立 `build-resource-stageN` 目录中真实执行 `idf.py build`、`idf.py size` 和 `idf.py size-components`，15 个命令均以退出码 0 完成。应用大小和 SHA-256 如下；Flash、静态 DIRAM、组件贡献、RainMaker 前基线及双 OTA 候选规划见 [MEMORY_RESOURCE_REPORT.md](MEMORY_RESOURCE_REPORT.md)。没有覆盖 `firmware/` 中的既有发布镜像。
+
+| Stage | 结果 | 应用大小 | Flash (`size`) | 静态 DIRAM | 应用 SHA-256 |
+|---|---|---:|---:|---:|---|
+| 1 | PASS (BUILD ONLY) | 1,069,504 B (`0x1051c0`) | 942,208 B | 159,960 B | `a9b04d071750b7113f848fdd79316d2dd2763e98f2f67634bb545bae05b645df` |
+| 2 | PASS (BUILD ONLY) | 1,430,464 B (`0x15d3c0`) | 1,294,916 B | 191,198 B | `a27bd35e35ba16005e8a5baeb7a423a159c0b9bf387b27826607f0281b62d5f8` |
+| 3 | PASS (BUILD ONLY) | 1,433,808 B (`0x15e0d0`) | 1,298,270 B | 191,198 B | `f5a1e2ae9363634ce62bd86c5739419a227fb2bd0edf58855ef79459fd713f0c` |
+| 4 | PASS (BUILD ONLY) | 1,447,424 B (`0x161600`) | 1,311,876 B | 203,670 B | `86963ac01d47f347ac391408bfd17e35dd6666403fe33e8bfa71e30cbae90b66` |
+| 5 | PASS (BUILD ONLY) | 1,483,408 B (`0x16a290`) | 1,343,568 B | 212,822 B | `d71d044c5f0973864473249e5336ec9788996835986bd8378b860612cc599ed5` |
+
+这些数字只证明静态构建；Free Heap、Largest Free Block、任务栈、TLS/MQTT、配对和红外学习峰值尚未在目标板测量。

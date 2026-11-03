@@ -47,5 +47,13 @@
 | HW-412 | 4 | 多 Zigbee 设备/端点状态隔离与短地址复用 | NOT TESTED | — | 旧 OFF 不得串设备或确认新命令 |
 | HW-413 | 4 | 缓存过期、主动回读超时及恢复后新反馈 | NOT TESTED | — | 页面应为 UNKNOWN/FAILED，收到新反馈后再确认 |
 | HW-414 | 5 | IR 入队、RMT 完成、失败和结果超时状态链 | NOT TESTED | — | SENT 仍不代表空调已关闭 |
+| HW-415 | 1 | Wi-Fi/Web/RTC 的 Free/Minimum Heap、Largest Block 与任务 HWM | NOT TESTED | — | 冷启动后记录，附固件 SHA-256 |
+| HW-416 | 2 | Wi-Fi/Zigbee 共存、建网及 Permit Join 内存峰值 | NOT TESTED | — | 对照关键内存事件和 RF 日志 |
+| HW-417 | 3 | Zigbee announce、端点/Cluster 发现内存峰值 | NOT TESTED | — | 保存发现完成/失败前后数据 |
+| HW-418 | 4 | 三路控制、状态回读和调度并发内存/任务栈 | NOT TESTED | — | 包含回读超时和多个同分钟任务 |
+| HW-419 | 5 | RMT 学习/发射及三个 I2C 设备并发资源峰值 | NOT TESTED | — | 同时运行 Wi-Fi、Zigbee、Web；传感器尚未集成 |
+| HW-420 | 6 | RainMaker TLS 握手、MQTT 首连及重连内存峰值 | NOT TESTED | — | Stage 6 尚未实现 |
+| HW-421 | 1～5 | 各 Stage 72 小时/7 天 Heap、Largest Block、最低 HWM 趋势 | NOT TESTED | — | 各自独立记录，不用编译结果代替 |
+| HW-422 | 6 | 双 OTA 升级、回滚及 NVS/Zigbee/IR 数据迁移 | NOT TESTED | — | 当前仅有候选分区规划，尚未启用 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。

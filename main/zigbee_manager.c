@@ -249,6 +249,7 @@ static void finish_discovery(discovery_ctx_t *ctx)
     }
     xSemaphoreGive(s_devices_lock);
     send_read(ctx->short_addr, 1, ESP_ZB_ZCL_CLUSTER_ID_BASIC, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID);
+    diagnostics_record_memory_event("zigbee_discovery_done");
     free(ctx);
 }
 
@@ -270,6 +271,7 @@ static void active_ep_cb(esp_zb_zdp_status_t status, uint8_t count, uint8_t *eps
     discovery_ctx_t *ctx = user_ctx;
     if (status != ESP_ZB_ZDP_STATUS_SUCCESS || !eps) {
         ESP_LOGW(TAG, "Active endpoint discovery failed for 0x%04x", ctx->short_addr);
+        diagnostics_record_memory_event("zigbee_discovery_failed");
         free(ctx);
         return;
     }
@@ -379,6 +381,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
             } else {
                 s_network_ready = true;
                 ESP_LOGI(TAG, "Restored Zigbee network PAN=0x%04x channel=%u", esp_zb_get_pan_id(), esp_zb_get_current_channel());
+                diagnostics_record_memory_event("zigbee_restored");
                 poll_persisted_devices();
             }
         } else {
@@ -390,6 +393,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
         if (status == ESP_OK) {
             s_network_ready = true;
             ESP_LOGI(TAG, "Formed Zigbee network PAN=0x%04x channel=%u", esp_zb_get_pan_id(), esp_zb_get_current_channel());
+            diagnostics_record_memory_event("zigbee_formed");
             esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
         } else {
             diagnostics_set_error(TAG, "network formation failed: %s", esp_err_to_name(status));
@@ -399,6 +403,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
     case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE: {
         esp_zb_zdo_signal_device_annce_params_t *d = esp_zb_app_signal_get_params(p);
         ESP_LOGI(TAG, "Device announce short=0x%04x", d->device_short_addr);
+        diagnostics_record_memory_event("zigbee_device_announce");
 #if LIGHTGW_HAS_DISCOVERY
         xSemaphoreTake(s_devices_lock, portMAX_DELAY);
         zb_state_cache_device_announced(&s_state_cache, d->ieee_addr, d->device_short_addr, now_ms());
@@ -417,6 +422,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
     }
     case ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS:
         ESP_LOGI(TAG, "Permit join status=%u", *(uint8_t *)esp_zb_app_signal_get_params(p));
+        diagnostics_record_memory_event("zigbee_permit_status");
         break;
     default:
         ESP_LOGD(TAG, "Zigbee signal %s status=%s", esp_zb_zdo_signal_to_string(type), esp_err_to_name(status));
@@ -469,6 +475,7 @@ esp_err_t zigbee_manager_start(void)
     };
     ESP_RETURN_ON_ERROR(esp_zb_platform_config(&platform), TAG, "Zigbee platform config");
     esp_coex_wifi_i154_enable();
+    diagnostics_record_memory_event("zigbee_starting");
     return xTaskCreate(zigbee_task, "zigbee_main", 8192, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
@@ -491,6 +498,7 @@ esp_err_t zigbee_manager_permit_join(uint8_t seconds)
     if (err == ESP_OK) {
         s_pairing_until_us = esp_timer_get_time() + (int64_t)seconds * 1000000;
         ESP_LOGI(TAG, "Permit join requested for %u seconds", seconds);
+        diagnostics_record_memory_event("zigbee_permit_join");
     } else {
         diagnostics_set_error(TAG, "permit join failed: %s", esp_err_to_name(err));
     }

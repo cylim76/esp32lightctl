@@ -51,5 +51,6 @@ void app_main(void)
     ESP_ERROR_CHECK(scheduler_start());
 #endif
     ESP_ERROR_CHECK(web_server_start());
+    diagnostics_record_memory_event("startup_complete");
     ESP_LOGI(TAG, "ESP32-C6 standalone light gateway Stage %d started", LIGHTGW_STAGE);
 }

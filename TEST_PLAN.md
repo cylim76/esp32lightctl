@@ -56,6 +56,18 @@
 - Wi-Fi 高吞吐下执行不少于 200 次 Zigbee 操作。
 - 连续运行至少 72 小时，记录重启、coredump、Minimum Free Heap 趋势、丢包和最大响应时间。
 
+## 每个 Stage 的资源检查
+
+1. 使用全新独立构建目录依次执行 `idf.py build`、`idf.py size`、`idf.py size-components`，把结果、应用大小和 SHA-256 追加到 `BUILD.md` / `MEMORY_RESOURCE_REPORT.md`。
+2. 冷启动后记录 Free Heap、Minimum Free Heap、Largest Free Block 和全部任务 Stack High Water Mark；任务列表若显示截断，必须先提高监控容量或减少任务后再判断。
+3. Stage 2/3 在 Permit Join 前、设备 announce、端点发现完成后各保存一次页面和串口数据。
+4. Stage 5 在开始学习、学习缓冲分配、每次采集和释放后保存数据；验证释放后的堆恢复趋势，并检查 Largest Free Block 是否持续缩小。
+5. 并发运行 Wi-Fi、Zigbee、Web、RMT、DS3231 和后续两个 I2C 传感器；分别进行 Web 高频刷新、Zigbee 配对和红外学习，记录超时、掉线、复位及 coredump。
+6. Stage 6 集成 RainMaker 前保存 Stage 5 基线；集成后分别记录 TLS 握手、MQTT 首连/重连前后的事件和最低堆。没有 Stage 6 实际构建或硬件日志时保持 `NOT TESTED`。
+7. 对最低 HWM 任务执行其最坏路径；低于 512 B 的警告不能直接通过增大栈掩盖，应先确认是否有局部大数组或递归。
+
+资源判定必须使用同一固件 SHA-256 和可复现负载。编译器的静态 DIRAM 统计、QEMU 或模拟测试不得写为硬件内存 `PASS`。
+
 ## Phase A 统一控制专项
 
 - 烧录 `tests/phase_a_app/build2/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY` 的完整串口日志；8 项全部 PASS 才能把 C 测试运行状态从 `NOT TESTED` 改为 PASS。
