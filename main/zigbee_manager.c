@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "nvs.h"
 #include "stage_config.h"
+#include "zigbee_state_cache.h"
 #include "zcl/esp_zigbee_zcl_command.h"
 
 static const char *TAG = "zigbee";
@@ -20,6 +21,9 @@ static SemaphoreHandle_t s_devices_lock;
 static zb_device_snapshot_t s_devices[APP_MAX_ZIGBEE_DEVICES];
 static bool s_network_ready;
 static int64_t s_pairing_until_us;
+static zb_state_cache_t s_state_cache;
+
+static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
 typedef struct {
     uint16_t short_addr;
@@ -69,11 +73,25 @@ static int find_device_by_short(uint16_t short_addr)
 }
 
 #if LIGHTGW_HAS_DISCOVERY
+static int find_device_by_ieee(const esp_zb_ieee_addr_t ieee)
+{
+    for (int i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
+        if (s_devices[i].used && memcmp(s_devices[i].ieee_addr, ieee, sizeof(esp_zb_ieee_addr_t)) == 0) return i;
+    }
+    return -1;
+}
+
 static int find_or_add_device(uint16_t short_addr, const esp_zb_ieee_addr_t ieee)
 {
     int free_slot = -1;
     for (int i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
         if (!s_devices[i].used && free_slot < 0) free_slot = i;
+        if (s_devices[i].used && s_devices[i].short_addr == short_addr &&
+            memcmp(s_devices[i].ieee_addr, ieee, sizeof(esp_zb_ieee_addr_t)) != 0) {
+            s_devices[i].online = false;
+            s_devices[i].short_addr = UINT16_MAX;
+            s_devices[i].state[0] = s_devices[i].state[1] = s_devices[i].state[2] = ZB_CHANNEL_UNKNOWN;
+        }
         if (s_devices[i].used && memcmp(s_devices[i].ieee_addr, ieee, sizeof(esp_zb_ieee_addr_t)) == 0) {
             s_devices[i].short_addr = short_addr;
             s_devices[i].online = true;
@@ -108,16 +126,32 @@ static void send_read(uint16_t addr, uint8_t endpoint, uint16_t cluster, uint16_
 
 static void read_all_states(uint16_t addr, const uint8_t eps[3])
 {
-    for (int i = 0; i < 3; ++i) if (eps[i]) send_read(addr, eps[i], ESP_ZB_ZCL_CLUSTER_ID_ON_OFF, ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+    for (int i = 0; i < 3; ++i) if (eps[i]) {
+        xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+        zb_state_cache_begin_read(&s_state_cache, addr, eps[i], now_ms());
+        xSemaphoreGive(s_devices_lock);
+        send_read(addr, eps[i], ESP_ZB_ZCL_CLUSTER_ID_ON_OFF, ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+    }
 }
 
 static void poll_persisted_devices(void)
 {
+    struct { uint16_t addr; uint8_t eps[3]; } pending[APP_MAX_ZIGBEE_DEVICES];
+    size_t count = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
-        if (s_devices[i].used && s_devices[i].supported) read_all_states(s_devices[i].short_addr, s_devices[i].endpoints);
+        if (s_devices[i].used && s_devices[i].supported && s_devices[i].mapping_confirmed) {
+            pending[count].addr = s_devices[i].short_addr;
+            memcpy(pending[count].eps, s_devices[i].endpoints, 3);
+            for (int ch = 0; ch < 3; ++ch) {
+                zb_state_cache_register_endpoint(&s_state_cache, s_devices[i].ieee_addr,
+                                                 s_devices[i].short_addr, s_devices[i].endpoints[ch]);
+            }
+            count++;
+        }
     }
     xSemaphoreGive(s_devices_lock);
+    for (size_t i = 0; i < count; ++i) read_all_states(pending[i].addr, pending[i].eps);
 }
 
 #if LIGHTGW_HAS_CONTROL
@@ -208,6 +242,9 @@ static void finish_discovery(discovery_ctx_t *ctx)
         memcpy(s_devices[idx].discovered_endpoints, ctx->eps, ctx->ep_count);
         s_devices[idx].onoff_endpoint_count = ctx->onoff_count;
         memcpy(s_devices[idx].onoff_endpoints, ctx->onoff_eps, ctx->onoff_count);
+        for (uint8_t i = 0; i < ctx->onoff_count; ++i) {
+            zb_state_cache_register_endpoint(&s_state_cache, ctx->ieee, ctx->short_addr, ctx->onoff_eps[i]);
+        }
         save_devices();
     }
     xSemaphoreGive(s_devices_lock);
@@ -261,8 +298,10 @@ static void update_onoff(uint16_t addr, uint8_t endpoint, bool on, int8_t rssi)
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(addr);
     if (idx >= 0) {
+        bool cache_updated = zb_state_cache_update(&s_state_cache, addr, endpoint,
+                                                   on ? ZB_CACHE_ON : ZB_CACHE_OFF, now_ms());
         for (int ch = 0; ch < 3; ++ch) if (s_devices[idx].endpoints[ch] == endpoint) {
-            s_devices[idx].state[ch] = on;
+            s_devices[idx].state[ch] = cache_updated ? (on ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF) : ZB_CHANNEL_UNKNOWN;
             mapped = true;
         }
         s_devices[idx].online = true;
@@ -361,6 +400,15 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
         esp_zb_zdo_signal_device_annce_params_t *d = esp_zb_app_signal_get_params(p);
         ESP_LOGI(TAG, "Device announce short=0x%04x", d->device_short_addr);
 #if LIGHTGW_HAS_DISCOVERY
+        xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+        zb_state_cache_device_announced(&s_state_cache, d->ieee_addr, d->device_short_addr, now_ms());
+        int prior = find_device_by_ieee(d->ieee_addr);
+        if (prior >= 0) {
+            s_devices[prior].short_addr = d->device_short_addr;
+            s_devices[prior].online = true;
+            s_devices[prior].state[0] = s_devices[prior].state[1] = s_devices[prior].state[2] = ZB_CHANNEL_UNKNOWN;
+        }
+        xSemaphoreGive(s_devices_lock);
         discover_device(d->device_short_addr, d->ieee_addr);
 #else
         ESP_LOGI(TAG, "Stage 2 records join only; endpoint discovery is enabled in Stage 3");
@@ -413,6 +461,7 @@ esp_err_t zigbee_manager_start(void)
 {
     s_devices_lock = xSemaphoreCreateMutex();
     if (!s_devices_lock) return ESP_ERR_NO_MEM;
+    zb_state_cache_init(&s_state_cache, APP_ZIGBEE_STATE_MAX_AGE_MS, APP_ZIGBEE_READ_TIMEOUT_MS);
     load_devices();
     esp_zb_platform_config_t platform = {
         .radio_config = {.radio_mode = ZB_RADIO_MODE_NATIVE},
@@ -475,6 +524,10 @@ esp_err_t zigbee_manager_confirm_mapping(uint16_t short_addr, const uint8_t endp
     if (valid) {
         memcpy(s_devices[idx].endpoints, endpoints, 3);
         s_devices[idx].mapping_confirmed = true;
+        for (int ch = 0; ch < 3; ++ch) {
+            zb_state_cache_register_endpoint(&s_state_cache, s_devices[idx].ieee_addr,
+                                             s_devices[idx].short_addr, endpoints[ch]);
+        }
         save_devices();
     }
     xSemaphoreGive(s_devices_lock);
@@ -494,7 +547,11 @@ esp_err_t zigbee_manager_set_channel(uint16_t addr, unsigned channel, bool on)
     uint8_t ep = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(addr);
-    if (idx >= 0 && s_devices[idx].supported && s_devices[idx].mapping_confirmed) ep = s_devices[idx].endpoints[channel];
+    if (idx >= 0 && s_devices[idx].supported && s_devices[idx].mapping_confirmed) {
+        ep = s_devices[idx].endpoints[channel];
+        if (ep) zb_state_cache_begin_read(&s_state_cache, addr, ep, now_ms());
+        s_devices[idx].state[channel] = ZB_CHANNEL_UNKNOWN;
+    }
     xSemaphoreGive(s_devices_lock);
     if (!ep) return ESP_ERR_NOT_FOUND;
     ESP_LOGI(TAG, "Control TX short=0x%04x channel=%u endpoint=%u value=%s",
@@ -512,23 +569,49 @@ esp_err_t zigbee_manager_set_channel(uint16_t addr, unsigned channel, bool on)
     return ESP_OK;
 }
 
-esp_err_t zigbee_manager_all_off(void)
-{
-    esp_err_t result = ESP_ERR_NOT_FOUND;
-    zb_device_snapshot_t copy[APP_MAX_ZIGBEE_DEVICES];
-    size_t n = zigbee_manager_snapshot(copy, APP_MAX_ZIGBEE_DEVICES);
-    for (size_t i = 0; i < n; ++i) if (copy[i].supported) {
-        for (unsigned ch = 0; ch < 3; ++ch) if (zigbee_manager_set_channel(copy[i].short_addr, ch, false) == ESP_OK) result = ESP_OK;
-    }
-    return result;
-}
-
 size_t zigbee_manager_snapshot(zb_device_snapshot_t *out, size_t capacity)
 {
     if (!out || !capacity) return 0;
     size_t n = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
-    for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES && n < capacity; ++i) if (s_devices[i].used) out[n++] = s_devices[i];
+    for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES && n < capacity; ++i) if (s_devices[i].used) {
+        out[n] = s_devices[i];
+        for (int ch = 0; ch < 3; ++ch) {
+            zb_state_cache_entry_t cached;
+            if (!s_devices[i].endpoints[ch] ||
+                !zb_state_cache_get(&s_state_cache, s_devices[i].short_addr, s_devices[i].endpoints[ch], now_ms(), &cached) ||
+                !cached.valid) out[n].state[ch] = ZB_CHANNEL_UNKNOWN;
+            else out[n].state[ch] = cached.value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
+        }
+        n++;
+    }
     xSemaphoreGive(s_devices_lock);
     return n;
+}
+
+esp_err_t zigbee_manager_get_channel_status(uint16_t short_addr, unsigned channel,
+                                            zb_channel_status_t *status)
+{
+    if (!status || channel > 2 || !s_devices_lock) return ESP_ERR_INVALID_ARG;
+    memset(status, 0, sizeof(*status));
+    status->state = ZB_CHANNEL_UNKNOWN;
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    int idx = find_device_by_short(short_addr);
+    if (idx < 0 || !s_devices[idx].mapping_confirmed || !s_devices[idx].endpoints[channel]) {
+        xSemaphoreGive(s_devices_lock);
+        return ESP_ERR_NOT_FOUND;
+    }
+    status->endpoint = s_devices[idx].endpoints[channel];
+    zb_state_cache_entry_t cached;
+    status->known_endpoint = zb_state_cache_get(&s_state_cache, short_addr, status->endpoint,
+                                                now_ms(), &cached);
+    if (status->known_endpoint) {
+        status->valid = cached.valid;
+        status->read_pending = cached.read_pending;
+        status->read_timed_out = cached.read_timed_out;
+        status->updated_us = cached.updated_ms * 1000;
+        if (cached.valid) status->state = cached.value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
+    }
+    xSemaphoreGive(s_devices_lock);
+    return status->known_endpoint ? ESP_OK : ESP_ERR_NOT_FOUND;
 }

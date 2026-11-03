@@ -15,6 +15,9 @@
 #include "mbedtls/base64.h"
 #include "settings.h"
 #include "stage_config.h"
+#if LIGHTGW_HAS_CONTROL
+#include "device_control.h"
+#endif
 #include "time_manager.h"
 #include "wifi_manager.h"
 #if LIGHTGW_HAS_SCHEDULER
@@ -46,6 +49,22 @@ static esp_err_t send_json_error(httpd_req_t *req, const char *status, const cha
     cJSON_Delete(root);
     return err;
 }
+
+#if LIGHTGW_HAS_CONTROL
+static esp_err_t send_command_accepted(httpd_req_t *req, uint32_t command_id)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddTrueToObject(root, "ok");
+    cJSON_AddNumberToObject(root, "command_id", command_id);
+    cJSON_AddStringToObject(root, "status", "PENDING");
+    char *text = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, text);
+    free(text);
+    cJSON_Delete(root);
+    return err;
+}
+#endif
 
 static bool authorized(httpd_req_t *req)
 {
@@ -166,7 +185,9 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "pairing_remaining", 0);
 #endif
 
-    const app_settings_t *cfg = settings_get();
+    app_settings_t cfg_snapshot;
+    settings_copy(&cfg_snapshot);
+    const app_settings_t *cfg = &cfg_snapshot;
     cJSON_AddStringToObject(root, "timezone", cfg->timezone);
     cJSON_AddNumberToObject(root, "max_schedules", APP_MAX_SCHEDULES);
     cJSON_AddNumberToObject(root, "max_schedules_per_target", APP_MAX_SCHEDULES_PER_TARGET);
@@ -222,7 +243,19 @@ static esp_err_t status_get(httpd_req_t *req)
         cJSON_AddBoolToObject(d, "online", devices[i].online);
         cJSON_AddNumberToObject(d, "rssi", devices[i].last_rssi);
         cJSON *states = cJSON_AddArrayToObject(d, "states");
-        for (int ch = 0; ch < 3; ++ch) cJSON_AddItemToArray(states, cJSON_CreateNumber(devices[i].state[ch]));
+        cJSON *state_details = cJSON_AddArrayToObject(d, "state_details");
+        for (int ch = 0; ch < 3; ++ch) {
+            cJSON_AddItemToArray(states, cJSON_CreateNumber(devices[i].state[ch]));
+            zb_channel_status_t channel = {0};
+            zigbee_manager_get_channel_status(devices[i].short_addr, ch, &channel);
+            cJSON *detail = cJSON_CreateObject();
+            cJSON_AddNumberToObject(detail, "endpoint", channel.endpoint);
+            cJSON_AddBoolToObject(detail, "valid", channel.valid);
+            cJSON_AddBoolToObject(detail, "read_pending", channel.read_pending);
+            cJSON_AddBoolToObject(detail, "read_timed_out", channel.read_timed_out);
+            cJSON_AddNumberToObject(detail, "updated_uptime_ms", channel.updated_us / 1000);
+            cJSON_AddItemToArray(state_details, detail);
+        }
         cJSON *discovered = cJSON_AddArrayToObject(d, "discovered_endpoints");
         for (int ep = 0; ep < devices[i].discovered_endpoint_count; ++ep) {
             cJSON_AddItemToArray(discovered, cJSON_CreateNumber(devices[i].discovered_endpoints[ep]));
@@ -428,44 +461,15 @@ static esp_err_t ir_send_post(httpd_req_t *req)
         cJSON_Delete(j);
         return send_json_error(req, "400 Bad Request", "slot_mask must be 1..3 and repeats 1..2");
     }
-    esp_err_t err = ir_manager_enqueue_send(mask->valueint, repeats->valueint, "manual");
+    schedule_target_t target = mask->valueint == 1 ? SCHEDULE_TARGET_AC_1 :
+                               mask->valueint == 2 ? SCHEDULE_TARGET_AC_2 : SCHEDULE_TARGET_AC_GROUP;
+    uint32_t command_id = 0;
+    esp_err_t err = device_control_submit_target_repeated(target, repeats->valueint, "web_ir", &command_id);
     cJSON_Delete(j);
-    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"IR queued; AC state remains unconfirmed\"}") :
+    return err == ESP_OK ? send_command_accepted(req, command_id) :
                            send_json_error(req, "409 Conflict", esp_err_to_name(err));
 }
 
-static esp_err_t ir_schedule_post(httpd_req_t *req)
-{
-    if (!authorized(req)) return ESP_OK;
-    cJSON *j = receive_json(req);
-    cJSON *enabled = j ? cJSON_GetObjectItem(j, "enabled") : NULL;
-    cJSON *same = j ? cJSON_GetObjectItem(j, "use_light_schedules") : NULL;
-    cJSON *hour = j ? cJSON_GetObjectItem(j, "hour") : NULL;
-    cJSON *minute = j ? cJSON_GetObjectItem(j, "minute") : NULL;
-    cJSON *days = j ? cJSON_GetObjectItem(j, "days") : NULL;
-    cJSON *mask = j ? cJSON_GetObjectItem(j, "slot_mask") : NULL;
-    if (!cJSON_IsBool(enabled) || !cJSON_IsBool(same) || !cJSON_IsNumber(hour) || !cJSON_IsNumber(minute) ||
-        !cJSON_IsNumber(days) || !cJSON_IsNumber(mask) || hour->valuedouble != hour->valueint ||
-        minute->valuedouble != minute->valueint || days->valuedouble != days->valueint ||
-        mask->valuedouble != mask->valueint || hour->valueint < 0 || hour->valueint > 23 ||
-        minute->valueint < 0 || minute->valueint > 59 || days->valueint < 0 || days->valueint > 127 ||
-        mask->valueint < 1 || mask->valueint > 3) {
-        cJSON_Delete(j);
-        return send_json_error(req, "400 Bad Request", "invalid IR schedule");
-    }
-    ir_schedule_t schedule = {
-        .enabled = cJSON_IsTrue(enabled),
-        .use_light_schedules = cJSON_IsTrue(same),
-        .hour = hour->valueint,
-        .minute = minute->valueint,
-        .days = days->valueint,
-        .slot_mask = mask->valueint,
-    };
-    esp_err_t err = ir_manager_save_schedule(&schedule);
-    cJSON_Delete(j);
-    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") :
-                           send_json_error(req, "400 Bad Request", esp_err_to_name(err));
-}
 #endif
 
 #if LIGHTGW_HAS_CONTROL
@@ -499,16 +503,50 @@ static esp_err_t switch_post(httpd_req_t *req)
         cJSON_Delete(j);
         return send_json_error(req, "400 Bad Request", "Invalid switch request");
     }
-    esp_err_t err = zigbee_manager_set_channel(addr->valueint, channel->valueint, cJSON_IsTrue(on));
+    uint32_t command_id = 0;
+    esp_err_t err = device_control_submit_light(addr->valueint, channel->valueint, cJSON_IsTrue(on),
+                                                "web", &command_id);
     cJSON_Delete(j);
-    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") : send_json_error(req, "404 Not Found", esp_err_to_name(err));
+    return err == ESP_OK ? send_command_accepted(req, command_id) :
+                           send_json_error(req, "409 Conflict", esp_err_to_name(err));
 }
 
 static esp_err_t all_off_post(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
-    esp_err_t err = zigbee_manager_all_off();
-    return (err == ESP_OK || err == ESP_ERR_NOT_FOUND) ? httpd_resp_sendstr(req, "{\"ok\":true}") : send_json_error(req, "503 Service Unavailable", esp_err_to_name(err));
+    uint32_t command_id = 0;
+    esp_err_t err = device_control_submit_target(SCHEDULE_TARGET_LIGHT_ALL, "web_all_off", &command_id);
+    return err == ESP_OK ? send_command_accepted(req, command_id) :
+                           send_json_error(req, "503 Service Unavailable", esp_err_to_name(err));
+}
+
+static esp_err_t control_result_get(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    char query[48], value[16];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "id", value, sizeof(value)) != ESP_OK) {
+        return send_json_error(req, "400 Bad Request", "id query parameter required");
+    }
+    char *end = NULL;
+    unsigned long id = strtoul(value, &end, 10);
+    if (!id || !end || *end) return send_json_error(req, "400 Bad Request", "invalid command id");
+    device_command_result_t result;
+    esp_err_t err = device_control_get_result((uint32_t)id, &result);
+    if (err != ESP_OK) return send_json_error(req, "404 Not Found", "command result expired or not found");
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddTrueToObject(root, "ok");
+    cJSON_AddNumberToObject(root, "command_id", result.id);
+    cJSON_AddStringToObject(root, "status", device_command_status_name(result.status));
+    cJSON_AddBoolToObject(root, "terminal", result.terminal);
+    cJSON_AddNumberToObject(root, "actual_state", result.actual_state);
+    cJSON_AddStringToObject(root, "detail", result.detail);
+    char *text = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    err = httpd_resp_sendstr(req, text);
+    free(text);
+    cJSON_Delete(root);
+    return err;
 }
 #endif
 
@@ -578,7 +616,7 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 18;
+    cfg.max_uri_handlers = 19;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
@@ -595,6 +633,7 @@ esp_err_t web_server_start(void)
         {.uri = "/api/mapping", .method = HTTP_POST, .handler = mapping_post},
         {.uri = "/api/switch", .method = HTTP_POST, .handler = switch_post},
         {.uri = "/api/all-off", .method = HTTP_POST, .handler = all_off_post},
+        {.uri = "/api/control/result", .method = HTTP_GET, .handler = control_result_get},
 #endif
 #if LIGHTGW_HAS_SCHEDULER
         {.uri = "/api/schedule", .method = HTTP_POST, .handler = schedule_post},
@@ -603,7 +642,6 @@ esp_err_t web_server_start(void)
         {.uri = "/api/ir/learn", .method = HTTP_POST, .handler = ir_learn_post},
         {.uri = "/api/ir/save", .method = HTTP_POST, .handler = ir_save_post},
         {.uri = "/api/ir/send", .method = HTTP_POST, .handler = ir_send_post},
-        {.uri = "/api/ir/schedule", .method = HTTP_POST, .handler = ir_schedule_post},
 #endif
     };
     for (size_t i = 0; i < sizeof(handlers) / sizeof(handlers[0]); ++i) {

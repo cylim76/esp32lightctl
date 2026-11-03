@@ -3,21 +3,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include "app_config.h"
+#include "device_control.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
 #include "settings.h"
-#include "stage_config.h"
 #include "time_manager.h"
-#include "zigbee_manager.h"
-#if LIGHTGW_HAS_IR
-#include "ir_manager.h"
-#endif
 
 #define EXEC_MAGIC 0x45584536UL
-#define EXEC_VERSION 1
+#define EXEC_VERSION 2
 #define LOG_MAGIC 0x4c4f4736UL
 
 typedef struct {
@@ -25,10 +20,9 @@ typedef struct {
     uint32_t date_key;
     time_t due_epoch;
     time_t next_action_epoch;
-    uint8_t pending_light_mask;
-    uint8_t pending_ac_mask;
+    uint32_t command_id;
     uint8_t next_retry_index;
-    uint8_t final_verification;
+    uint8_t attempt_count;
     uint8_t finished;
 } execution_state_t;
 
@@ -50,20 +44,6 @@ static const char *TAG = "scheduler";
 static execution_store_t s_exec;
 static scheduler_status_t s_status;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
-
-static uint8_t target_light_mask(uint8_t target)
-{
-    if (target <= SCHEDULE_TARGET_LIGHT_RIGHT) return 1U << target;
-    return target == SCHEDULE_TARGET_LIGHT_ALL ? 0x07 : 0;
-}
-
-static uint8_t target_ac_mask(uint8_t target)
-{
-    if (target == SCHEDULE_TARGET_AC_1) return 0x01;
-    if (target == SCHEDULE_TARGET_AC_2) return 0x02;
-    if (target == SCHEDULE_TARGET_AC_GROUP) return 0x03;
-    return 0;
-}
 
 static uint32_t schedule_signature(const app_schedule_entry_t *entry)
 {
@@ -136,38 +116,6 @@ static void load_state(void)
     nvs_close(nvs);
 }
 
-static uint8_t confirmed_light_mask(uint8_t selected)
-{
-    zb_device_snapshot_t devices[APP_MAX_ZIGBEE_DEVICES];
-    size_t count = zigbee_manager_snapshot(devices, APP_MAX_ZIGBEE_DEVICES);
-    uint8_t confirmed = 0;
-    for (unsigned channel = 0; channel < 3; ++channel) {
-        if (!(selected & (1U << channel))) continue;
-        bool any = false, all_off = true;
-        for (size_t i = 0; i < count; ++i) {
-            if (!devices[i].supported || !devices[i].mapping_confirmed) continue;
-            any = true;
-            if (devices[i].state[channel] != ZB_CHANNEL_OFF) all_off = false;
-        }
-        if (any && all_off) confirmed |= 1U << channel;
-    }
-    return confirmed;
-}
-
-static void send_lights(uint8_t mask, unsigned *submitted, unsigned *failed)
-{
-    zb_device_snapshot_t devices[APP_MAX_ZIGBEE_DEVICES];
-    size_t count = zigbee_manager_snapshot(devices, APP_MAX_ZIGBEE_DEVICES);
-    for (size_t i = 0; i < count; ++i) {
-        if (!devices[i].supported || !devices[i].mapping_confirmed) continue;
-        for (unsigned channel = 0; channel < 3; ++channel) {
-            if (!(mask & (1U << channel)) || devices[i].state[channel] == ZB_CHANNEL_OFF) continue;
-            esp_err_t err = zigbee_manager_set_channel(devices[i].short_addr, channel, false);
-            if (err == ESP_OK) (*submitted)++; else (*failed)++;
-        }
-    }
-}
-
 static time_t schedule_due_today(time_t now, const app_schedule_entry_t *entry, struct tm *local_out)
 {
     struct tm local;
@@ -180,9 +128,8 @@ static time_t schedule_due_today(time_t now, const app_schedule_entry_t *entry, 
     return mktime(&local);
 }
 
-static time_t find_next_schedule(time_t now)
+static time_t find_next_schedule(time_t now, const app_settings_t *cfg)
 {
-    const app_settings_t *cfg = settings_get();
     time_t best = 0;
     for (size_t i = 0; i < cfg->schedule_count; ++i) {
         const app_schedule_entry_t *entry = &cfg->schedules[i];
@@ -206,40 +153,51 @@ static time_t find_next_schedule(time_t now)
 static void mark_finished(unsigned index, execution_state_t *state, time_t now, const char *reason)
 {
     state->finished = true;
+    state->command_id = 0;
     state->next_action_epoch = 0;
     persist_execution();
     add_log(index, now, reason);
 }
 
-#if LIGHTGW_HAS_IR
-static uint8_t usable_ac_mask(uint8_t requested)
+static bool schedule_retry(unsigned index, execution_state_t *state,
+                           const app_schedule_entry_t *entry, time_t now)
 {
-    ir_status_t status;
-    ir_manager_get_status(&status);
-    uint8_t available = (status.code_saved[0] ? 1 : 0) | (status.code_saved[1] ? 2 : 0);
-    if (requested == 3 && available == 1) return 1; /* Shared broad-beam OFF code in slot 1. */
-    return requested & available;
+    int elapsed_minutes = (int)((now - state->due_epoch) / 60);
+    while (state->next_retry_index < entry->retry_count &&
+           entry->retry_offsets_minutes[state->next_retry_index] <= elapsed_minutes) {
+        state->next_retry_index++;
+    }
+    if (state->next_retry_index >= entry->retry_count) {
+        mark_finished(index, state, now, "retry limit reached; automatic OFF stopped");
+        return false;
+    }
+    state->next_action_epoch = state->due_epoch + entry->retry_offsets_minutes[state->next_retry_index] * 60;
+    state->next_retry_index++;
+    persist_execution();
+    return true;
 }
-#endif
+
+static bool command_succeeded(schedule_target_t target, const device_command_result_t *result)
+{
+    if (target <= SCHEDULE_TARGET_LIGHT_ALL) return result->status == DEVICE_COMMAND_CONFIRMED;
+    return result->status == DEVICE_COMMAND_SENT && result->terminal;
+}
 
 static void evaluate_entry(unsigned index, const app_schedule_entry_t *entry, time_t now)
 {
     struct tm local;
     time_t due = schedule_due_today(now, entry, &local);
     if (!entry->enabled || !(entry->days & (1U << local.tm_wday))) return;
-    /* Zero catch-up still permits execution during the scheduled minute. */
     uint16_t window_minutes = entry->catchup_window_minutes ? entry->catchup_window_minutes : 1;
     time_t deadline = due + (time_t)window_minutes * 60;
     if (now < due) return;
     execution_state_t *state = &s_exec.entries[index];
     uint32_t date_key = local_date_key(&local);
     uint32_t signature = schedule_signature(entry);
-    if (state->signature == signature && state->date_key > date_key) {
-        return; /* Time moved backward: fail safe instead of repeating an already visited date. */
-    }
+    if (state->signature == signature && state->date_key > date_key) return;
     if (now > deadline) {
         if (state->date_key == date_key && state->signature == signature && !state->finished) {
-            mark_finished(index, state, now, "window expired: bounded retries stopped; no cross-day retry");
+            mark_finished(index, state, now, "catch-up window expired; no cross-day retry");
         }
         return;
     }
@@ -249,62 +207,53 @@ static void evaluate_entry(unsigned index, const app_schedule_entry_t *entry, ti
         state->signature = signature;
         state->due_epoch = due;
         state->next_action_epoch = now;
-        state->pending_light_mask = target_light_mask(entry->target);
-        state->pending_ac_mask = target_ac_mask(entry->target);
         persist_execution();
-        add_log(index, now, now == due ? "due: execution started" : "startup/recovery catch-up started within window");
+        add_log(index, now, now == due ? "due: queued for unified device control" :
+                                        "startup/recovery catch-up started within window");
     }
     if (state->finished) return;
-    state->pending_light_mask &= ~confirmed_light_mask(state->pending_light_mask);
-    if (!state->pending_light_mask && !state->pending_ac_mask) {
-        mark_finished(index, state, now, "completed: light OFF confirmed; IR sent if selected (AC state unconfirmed)");
-        return;
-    }
-    if (now >= deadline) {
-        char result[128];
-        snprintf(result, sizeof(result), "window expired: pending lights=0x%02x AC=0x%02x; no cross-day retry",
-                 state->pending_light_mask, state->pending_ac_mask);
-        mark_finished(index, state, now, result);
-        return;
-    }
-    if (state->final_verification) {
-        if (now >= state->next_action_epoch) {
-            state->pending_light_mask &= ~confirmed_light_mask(state->pending_light_mask);
-            char result[128];
-            snprintf(result, sizeof(result), "retry limit reached: pending lights=0x%02x AC=0x%02x",
-                     state->pending_light_mask, state->pending_ac_mask);
-            mark_finished(index, state, now, result);
-        }
-        return;
-    }
-    if (now < state->next_action_epoch) return;
 
-    unsigned submitted = 0, failed = 0;
-    if (state->pending_light_mask && zigbee_manager_network_ready()) send_lights(state->pending_light_mask, &submitted, &failed);
-#if LIGHTGW_HAS_IR
-    if (state->pending_ac_mask) {
-        uint8_t mask = usable_ac_mask(state->pending_ac_mask);
-        esp_err_t err = mask ? ir_manager_enqueue_send(mask, 1, "energy_schedule") : ESP_ERR_NOT_FOUND;
-        if (err == ESP_OK) { state->pending_ac_mask = 0; submitted++; } else failed++;
+    if (state->command_id) {
+        device_command_result_t result;
+        esp_err_t err = device_control_get_result(state->command_id, &result);
+        if (err == ESP_OK && !result.terminal) return;
+        if (err == ESP_OK && command_succeeded((schedule_target_t)entry->target, &result)) {
+            char message[160];
+            snprintf(message, sizeof(message), "%s command %lu %s; actual=%s",
+                     settings_schedule_target_name(entry->target), (unsigned long)result.id,
+                     device_command_status_name(result.status),
+                     result.actual_state == DEVICE_ACTUAL_OFF ? "OFF" : "UNKNOWN");
+            mark_finished(index, state, now, message);
+            return;
+        }
+        char failure[160];
+        snprintf(failure, sizeof(failure), "command %lu failed/unavailable: %s",
+                 (unsigned long)state->command_id, err == ESP_OK ? result.detail : esp_err_to_name(err));
+        add_log(index, now, failure);
+        state->command_id = 0;
+        if (!schedule_retry(index, state, entry, now)) return;
     }
-#endif
-    char result[128];
-    snprintf(result, sizeof(result), "%s OFF attempt: submitted=%u failed=%u pending_lights=0x%02x pending_AC=0x%02x",
-             settings_schedule_target_name(entry->target), submitted, failed,
-             state->pending_light_mask, state->pending_ac_mask);
-    add_log(index, now, result);
-    int elapsed_minutes = (int)((now - due) / 60);
-    while (state->next_retry_index < entry->retry_count &&
-           entry->retry_offsets_minutes[state->next_retry_index] <= elapsed_minutes) state->next_retry_index++;
-    if (state->next_retry_index < entry->retry_count) {
-        state->next_action_epoch = due + entry->retry_offsets_minutes[state->next_retry_index] * 60;
-        state->next_retry_index++;
+
+    if (now < state->next_action_epoch) return;
+    uint32_t command_id = 0;
+    esp_err_t err = device_control_submit_target((schedule_target_t)entry->target,
+                                                  "energy_schedule", &command_id);
+    if (err == ESP_OK) {
+        state->command_id = command_id;
+        state->attempt_count++;
+        persist_execution();
+        char message[128];
+        snprintf(message, sizeof(message), "%s OFF command %lu PENDING (attempt %u)",
+                 settings_schedule_target_name(entry->target), (unsigned long)command_id,
+                 state->attempt_count);
+        add_log(index, now, message);
     } else {
-        state->final_verification = true;
-        state->next_action_epoch = now + 60;
-        if (state->next_action_epoch > deadline) state->next_action_epoch = deadline;
+        char message[128];
+        snprintf(message, sizeof(message), "%s OFF submit failed: %s",
+                 settings_schedule_target_name(entry->target), esp_err_to_name(err));
+        add_log(index, now, message);
+        schedule_retry(index, state, entry, now);
     }
-    persist_execution();
 }
 
 static void scheduler_task(void *arg)
@@ -314,9 +263,12 @@ static void scheduler_task(void *arg)
         if (time_manager_is_valid()) {
             time_t now;
             time(&now);
-            const app_settings_t *cfg = settings_get();
-            for (size_t i = 0; i < cfg->schedule_count && i < APP_MAX_SCHEDULES; ++i) evaluate_entry(i, &cfg->schedules[i], now);
-            time_t next = find_next_schedule(now);
+            app_settings_t cfg;
+            settings_copy(&cfg);
+            for (size_t i = 0; i < cfg.schedule_count && i < APP_MAX_SCHEDULES; ++i) {
+                evaluate_entry(i, &cfg.schedules[i], now);
+            }
+            time_t next = find_next_schedule(now, &cfg);
             portENTER_CRITICAL(&s_lock);
             s_status.next_schedule_epoch = next;
             portEXIT_CRITICAL(&s_lock);
@@ -326,7 +278,7 @@ static void scheduler_task(void *arg)
             strlcpy(s_status.last_result, "skipped: system time INVALID", sizeof(s_status.last_result));
             portEXIT_CRITICAL(&s_lock);
         }
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 

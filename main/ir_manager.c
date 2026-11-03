@@ -22,9 +22,10 @@
 #define IR_CAPTURE_TIMEOUT_MS 20000
 
 typedef struct {
+    uint32_t id;
     uint8_t slot_mask;
     uint8_t repeats;
-    char origin[16];
+    char origin[24];
 } ir_tx_job_t;
 
 static const char *TAG = "ir_manager";
@@ -32,7 +33,26 @@ static QueueHandle_t s_tx_queue;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static ir_status_t s_status;
 static ir_code_t s_candidate;
-static int64_t s_last_schedule_minute = -1;
+static ir_task_result_t s_task_history[APP_IR_TASK_HISTORY];
+static uint32_t s_next_task_id;
+
+static ir_task_result_t *task_record(uint32_t id)
+{
+    ir_task_result_t *record = &s_task_history[id % APP_IR_TASK_HISTORY];
+    return record->id == id ? record : NULL;
+}
+
+static void update_task(uint32_t id, ir_task_state_t state, const char *result, bool completed)
+{
+    portENTER_CRITICAL(&s_lock);
+    ir_task_result_t *record = task_record(id);
+    if (record) {
+        record->state = state;
+        if (result) strlcpy(record->result, result, sizeof(record->result));
+        if (completed) record->completed_us = esp_timer_get_time();
+    }
+    portEXIT_CRITICAL(&s_lock);
+}
 
 static bool codes_similar(const ir_code_t *a, const ir_code_t *b)
 {
@@ -158,88 +178,69 @@ static void refresh_code_metadata(uint8_t slot)
     free(code);
 }
 
-static int64_t minute_key(const struct tm *local)
+static void migrate_legacy_schedule(void)
 {
-    return (((int64_t)local->tm_year * 367 + local->tm_yday) * 24 + local->tm_hour) * 60 + local->tm_min;
-}
-
-static void evaluate_schedule(void)
-{
-    ir_schedule_t schedule;
-    portENTER_CRITICAL(&s_lock);
-    schedule = s_status.schedule;
-    portEXIT_CRITICAL(&s_lock);
-    if (!schedule.enabled) {
-        portENTER_CRITICAL(&s_lock);
-        strlcpy(s_status.schedule_skip_reason, "disabled", sizeof(s_status.schedule_skip_reason));
-        portEXIT_CRITICAL(&s_lock);
-        return;
-    }
-    const app_settings_t *settings = settings_get();
+    ir_schedule_t schedule = s_status.schedule;
+    if (!schedule.enabled) return;
+    app_settings_t settings_snapshot;
+    settings_copy(&settings_snapshot);
+    const app_settings_t *settings = &settings_snapshot;
     for (size_t i = 0; i < settings->schedule_count; ++i) {
         if (settings->schedules[i].target >= SCHEDULE_TARGET_AC_1) {
-            portENTER_CRITICAL(&s_lock);
-            strlcpy(s_status.schedule_skip_reason, "legacy IR schedule superseded by per-device AC schedules",
+            schedule.enabled = false;
+            ir_storage_save_schedule(&schedule);
+            s_status.schedule = schedule;
+            strlcpy(s_status.schedule_skip_reason, "legacy IR schedule disabled; per-device AC schedules exist",
                     sizeof(s_status.schedule_skip_reason));
-            portEXIT_CRITICAL(&s_lock);
             return;
         }
     }
-    const char *reason = NULL;
-    if (!time_manager_is_valid()) reason = "skipped: trusted system time unavailable";
-    if (reason) {
-        portENTER_CRITICAL(&s_lock);
-        strlcpy(s_status.schedule_skip_reason, reason, sizeof(s_status.schedule_skip_reason));
-        portEXIT_CRITICAL(&s_lock);
-        return;
-    }
-    time_t now;
-    struct tm local;
-    time(&now);
-    localtime_r(&now, &local);
-    int64_t key = minute_key(&local);
-    bool due = false;
+    app_schedule_entry_t migrated[APP_MAX_SCHEDULES];
+    memcpy(migrated, settings->schedules, settings->schedule_count * sizeof(*migrated));
+    size_t count = settings->schedule_count;
+    uint8_t target = schedule.slot_mask == 1 ? SCHEDULE_TARGET_AC_1 :
+                     schedule.slot_mask == 2 ? SCHEDULE_TARGET_AC_2 : SCHEDULE_TARGET_AC_GROUP;
+    size_t added = 0;
     if (schedule.use_light_schedules) {
         for (size_t i = 0; i < settings->schedule_count; ++i) {
             const app_schedule_entry_t *entry = &settings->schedules[i];
-            if (entry->enabled && entry->target <= SCHEDULE_TARGET_LIGHT_ALL &&
-                (entry->days & (1U << local.tm_wday)) &&
-                entry->hour == local.tm_hour && entry->minute == local.tm_min) {
-                due = true;
-                break;
+            if (entry->target <= SCHEDULE_TARGET_LIGHT_ALL && count < APP_MAX_SCHEDULES &&
+                added < APP_MAX_SCHEDULES_PER_TARGET) {
+                migrated[count] = *entry;
+                migrated[count++].target = target;
+                added++;
             }
         }
-    } else {
-        due = (schedule.days & (1U << local.tm_wday)) && schedule.hour == local.tm_hour &&
-              schedule.minute == local.tm_min;
+    } else if (count < APP_MAX_SCHEDULES) {
+        migrated[count++] = (app_schedule_entry_t){
+            .enabled = true, .target = target, .hour = schedule.hour, .minute = schedule.minute,
+            .days = schedule.days, .retry_count = 3, .retry_offsets_minutes = {1, 5, 10},
+            .catchup_window_minutes = 30,
+        };
+        added = 1;
     }
-    portENTER_CRITICAL(&s_lock);
-    strlcpy(s_status.schedule_skip_reason, due ? "due: queued" : "waiting for configured time",
-            sizeof(s_status.schedule_skip_reason));
-    portEXIT_CRITICAL(&s_lock);
-    if (due && key == s_last_schedule_minute) {
-        portENTER_CRITICAL(&s_lock);
-        strlcpy(s_status.schedule_skip_reason, "already triggered this minute", sizeof(s_status.schedule_skip_reason));
-        portEXIT_CRITICAL(&s_lock);
-    } else if (due) {
-        esp_err_t err = ir_manager_enqueue_send(schedule.slot_mask, 1, "schedule");
-        if (err == ESP_OK) s_last_schedule_minute = key;
-        else {
-            portENTER_CRITICAL(&s_lock);
-            snprintf(s_status.schedule_skip_reason, sizeof(s_status.schedule_skip_reason),
-                     "schedule queue failed: %s", esp_err_to_name(err));
-            portEXIT_CRITICAL(&s_lock);
-        }
+    esp_err_t err = added ? settings_save_schedules(migrated, count, settings->timezone) : ESP_ERR_NOT_FOUND;
+    if (err == ESP_OK) {
+        schedule.enabled = false;
+        ir_storage_save_schedule(&schedule);
+        s_status.schedule = schedule;
+        snprintf(s_status.schedule_skip_reason, sizeof(s_status.schedule_skip_reason),
+                 "migrated %u legacy IR schedule(s); legacy executor disabled", (unsigned)added);
+        ESP_LOGI(TAG, "%s", s_status.schedule_skip_reason);
+    } else {
+        snprintf(s_status.schedule_skip_reason, sizeof(s_status.schedule_skip_reason),
+                 "legacy IR schedule not executed; migration failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "%s", s_status.schedule_skip_reason);
     }
 }
 
 static void tx_task(void *arg)
 {
     (void)arg;
-    TickType_t last_schedule_check = 0;
     for (;;) {
         ir_tx_job_t job;
         if (xQueueReceive(s_tx_queue, &job, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            update_task(job.id, IR_TASK_TRANSMITTING, "RMT transmission in progress", false);
             portENTER_CRITICAL(&s_lock);
             s_status.transmitting = true;
             portEXIT_CRITICAL(&s_lock);
@@ -267,14 +268,11 @@ static void tx_task(void *arg)
                 ESP_LOGE(TAG, "%s", message);
             }
             set_last_result(message, job.slot_mask);
+            update_task(job.id, result == ESP_OK && sent ? IR_TASK_SENT : IR_TASK_FAILED,
+                        message, true);
             portENTER_CRITICAL(&s_lock);
             s_status.transmitting = false;
             portEXIT_CRITICAL(&s_lock);
-        }
-        TickType_t now = xTaskGetTickCount();
-        if (now - last_schedule_check >= pdMS_TO_TICKS(10 * 1000)) {
-            last_schedule_check = now;
-            evaluate_schedule();
         }
     }
 }
@@ -287,6 +285,7 @@ esp_err_t ir_manager_start(void)
     ESP_RETURN_ON_ERROR(ir_storage_init(), TAG, "storage init");
     ESP_RETURN_ON_ERROR(ir_transmitter_init(), TAG, "transmitter init");
     ir_storage_load_schedule(&s_status.schedule);
+    migrate_legacy_schedule();
     s_tx_queue = xQueueCreate(IR_TX_QUEUE_DEPTH, sizeof(ir_tx_job_t));
     if (!s_tx_queue) return ESP_ERR_NO_MEM;
     for (uint8_t slot = 0; slot < IR_CODE_SLOT_COUNT; ++slot) refresh_code_metadata(slot);
@@ -344,8 +343,10 @@ esp_err_t ir_manager_save_candidate(uint8_t slot, uint32_t carrier_hz, uint16_t 
     return err;
 }
 
-esp_err_t ir_manager_enqueue_send(uint8_t slot_mask, uint8_t repeats, const char *origin)
+esp_err_t ir_manager_submit_send(uint8_t slot_mask, uint8_t repeats, const char *origin,
+                                 uint32_t *task_id)
 {
+    if (!task_id) return ESP_ERR_INVALID_ARG;
     if (!s_tx_queue || !(slot_mask & 0x03U) || (slot_mask & ~0x03U) || repeats < 1 || repeats > 2) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -357,19 +358,36 @@ esp_err_t ir_manager_enqueue_send(uint8_t slot_mask, uint8_t repeats, const char
     portEXIT_CRITICAL(&s_lock);
     if (learning) return ESP_ERR_INVALID_STATE;
     ir_tx_job_t job = {.slot_mask = slot_mask, .repeats = repeats};
+    portENTER_CRITICAL(&s_lock);
+    job.id = ++s_next_task_id;
+    if (!job.id) job.id = ++s_next_task_id;
+    ir_task_result_t *record = &s_task_history[job.id % APP_IR_TASK_HISTORY];
+    memset(record, 0, sizeof(*record));
+    record->id = job.id;
+    record->state = IR_TASK_QUEUED;
+    record->slot_mask = slot_mask;
+    record->repeats = repeats;
+    record->queued_us = esp_timer_get_time();
+    strlcpy(record->origin, origin ? origin : "manual", sizeof(record->origin));
+    strlcpy(record->result, "queued", sizeof(record->result));
+    portEXIT_CRITICAL(&s_lock);
     strlcpy(job.origin, origin ? origin : "manual", sizeof(job.origin));
-    return xQueueSend(s_tx_queue, &job, 0) == pdTRUE ? ESP_OK : ESP_ERR_NO_MEM;
+    if (xQueueSend(s_tx_queue, &job, 0) != pdTRUE) {
+        update_task(job.id, IR_TASK_FAILED, "IR queue full", true);
+        return ESP_ERR_NO_MEM;
+    }
+    *task_id = job.id;
+    return ESP_OK;
 }
 
-esp_err_t ir_manager_save_schedule(const ir_schedule_t *schedule)
+esp_err_t ir_manager_get_task_result(uint32_t task_id, ir_task_result_t *result)
 {
-    esp_err_t err = ir_storage_save_schedule(schedule);
-    if (err == ESP_OK) {
-        portENTER_CRITICAL(&s_lock);
-        s_status.schedule = *schedule;
-        portEXIT_CRITICAL(&s_lock);
-    }
-    return err;
+    if (!result || !task_id) return ESP_ERR_INVALID_ARG;
+    portENTER_CRITICAL(&s_lock);
+    ir_task_result_t *record = task_record(task_id);
+    if (record) *result = *record;
+    portEXIT_CRITICAL(&s_lock);
+    return record ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
 void ir_manager_get_status(ir_status_t *status)

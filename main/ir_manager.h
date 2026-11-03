@@ -31,9 +31,29 @@ typedef struct {
     ir_schedule_t schedule;
 } ir_status_t;
 
+typedef enum {
+    IR_TASK_UNKNOWN = 0,
+    IR_TASK_QUEUED,
+    IR_TASK_TRANSMITTING,
+    IR_TASK_SENT,
+    IR_TASK_FAILED,
+} ir_task_state_t;
+
+typedef struct {
+    uint32_t id;
+    ir_task_state_t state;
+    uint8_t slot_mask;
+    uint8_t repeats;
+    int64_t queued_us;
+    int64_t completed_us;
+    char origin[24];
+    char result[96];
+} ir_task_result_t;
+
 esp_err_t ir_manager_start(void);
 esp_err_t ir_manager_start_learning(uint8_t slot);
 esp_err_t ir_manager_save_candidate(uint8_t slot, uint32_t carrier_hz, uint16_t duty_percent);
-esp_err_t ir_manager_enqueue_send(uint8_t slot_mask, uint8_t repeats, const char *origin);
-esp_err_t ir_manager_save_schedule(const ir_schedule_t *schedule);
+esp_err_t ir_manager_submit_send(uint8_t slot_mask, uint8_t repeats, const char *origin,
+                                 uint32_t *task_id);
+esp_err_t ir_manager_get_task_result(uint32_t task_id, ir_task_result_t *result);
 void ir_manager_get_status(ir_status_t *status);

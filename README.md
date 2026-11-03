@@ -31,6 +31,8 @@
 - 管理密码使用随机盐 + PBKDF2-HMAC-SHA256（120,000 次）保存；控制页面及 API 使用 HTTP Basic 访问控制。
 - Coordinator 建网、180 秒允许入网、设备 announce、Active Endpoint/Simple Descriptor/model 发现。
 - Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
+- Web、调度器和后续云端入口统一经过 Device Control Service；每个命令拥有 ID，并区分 `PENDING`、`SENT`、`CONFIRMED`、`FAILED` 与实际状态 `UNKNOWN`。
+- Zigbee 状态按 IEEE/短地址/端点隔离并记录更新时间；过期、回读超时、设备重新 announce 或短地址复用时，旧 OFF 不得确认本次关灯成功。
 - Zigbee 栈网络数据保存在 `zb_storage` 分区；应用设备表、Wi-Fi 和定时设置保存在 NVS。
 - 左/中/右、全部灯光、空调 1、空调 2、空调组各自最多 8 条计划；每条保存目标、启用状态、时分、星期、有限重试及补执行窗口。灯光使用目标端点的明确 OFF，空调只重放已确认保存的 OFF 学习码。
 - DS3231 可选 RTC 使用原生 I²C 驱动，检查 OSF 后才恢复 UTC。系统时间一经 RTC、NTP 或管理员手动设置验证有效，不会因 Wi-Fi 离线而过期；每天北京时间 02:00 尝试 NTP，并在成功后回写 RTC。
@@ -51,12 +53,15 @@ main/
   rtc_manager.c          DS3231 I2C、UTC 读写和 OSF 检查
   time_manager.c         北京时间、NTP、RTC/手动时间来源和有效性
   web_server.c           鉴权 HTTP API
-  zigbee_manager.c       Coordinator、发现、Aqara 协议、状态同步
-  scheduler.c            按设备每周关闭、有限重试/补执行和每日状态
+  zigbee_manager.c       Coordinator、发现、Aqara 协议、端点反馈
+  zigbee_state_cache.c   多设备/端点隔离、有效期、回读超时
+  device_control.c       Web/调度器共用的异步命令队列
+  device_state.c         命令生命周期与结果历史
+  scheduler.c            唯一自动关闭执行器、有限重试/补执行
   ir_receiver.c          RMT RX、长帧采集、LG 候选识别
   ir_transmitter.c       RMT TX、载波、原始码重放和安全限制
   ir_storage.c           两组红外码与空调定时的独立 NVS
-  ir_manager.c           三次学习、异步队列、状态和空调调度
+  ir_manager.c           三次学习、带任务 ID 的异步发射与结果
   web/index.html         内置移动端页面
 partitions.csv           NVS、应用、Zigbee 持久化、coredump
 sdkconfig.defaults       C6、共存、Zigbee 默认配置
@@ -104,6 +109,8 @@ Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-li
 ### 本地编译验证记录
 
 2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～5 执行了真实 `idf.py build`。当前源码的构建结果、应用大小及 SHA-256 记录在 [BUILD.md](BUILD.md)；[firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt) 仅对应未改写的既有发布镜像。这些结果只证明编译与链接通过，不代表硬件测试通过。
+
+Phase A 的控制边界见 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [DEVICE_CONTROL.md](DEVICE_CONTROL.md)。可烧录 C 测试工程位于 `tests/phase_a_app`。
 
 ## USB 烧录与监控
 

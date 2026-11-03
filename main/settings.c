@@ -5,12 +5,15 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "mbedtls/md.h"
 #include "mbedtls/pkcs5.h"
 #include "nvs.h"
 
 static const char *TAG = "settings";
 static app_settings_t s_cfg;
+static SemaphoreHandle_t s_cfg_lock;
 
 const char *settings_schedule_target_name(schedule_target_t target)
 {
@@ -73,6 +76,8 @@ static bool valid_schedule_list(const app_schedule_entry_t *entries, size_t coun
 
 esp_err_t settings_init(void)
 {
+    if (!s_cfg_lock) s_cfg_lock = xSemaphoreCreateMutex();
+    if (!s_cfg_lock) return ESP_ERR_NO_MEM;
     memset(&s_cfg, 0, sizeof(s_cfg));
     strlcpy(s_cfg.admin_user, "admin", sizeof(s_cfg.admin_user));
     strlcpy(s_cfg.device_name, "lightgw", sizeof(s_cfg.device_name));
@@ -194,6 +199,14 @@ esp_err_t settings_save_device_name(const char *device_name)
 
 const app_settings_t *settings_get(void) { return &s_cfg; }
 
+void settings_copy(app_settings_t *out)
+{
+    if (!out) return;
+    if (s_cfg_lock) xSemaphoreTake(s_cfg_lock, portMAX_DELAY);
+    *out = s_cfg;
+    if (s_cfg_lock) xSemaphoreGive(s_cfg_lock);
+}
+
 esp_err_t settings_save_wifi(const char *ssid, const char *password)
 {
     if (!ssid || !password || ssid[0] == '\0' || strlen(ssid) > 32 || strlen(password) > 64) return ESP_ERR_INVALID_ARG;
@@ -258,10 +271,12 @@ esp_err_t settings_save_schedules(const app_schedule_entry_t *entries, size_t co
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
     if (err == ESP_OK) {
+        xSemaphoreTake(s_cfg_lock, portMAX_DELAY);
         memset(s_cfg.schedules, 0, sizeof(s_cfg.schedules));
         if (count) memcpy(s_cfg.schedules, entries, count * sizeof(*entries));
         s_cfg.schedule_count = count;
         strlcpy(s_cfg.timezone, timezone, sizeof(s_cfg.timezone));
+        xSemaphoreGive(s_cfg_lock);
     }
     return err;
 }

@@ -13,10 +13,10 @@ set(app_requires
 )
 
 if(LIGHTGW_STAGE GREATER_EQUAL 2)
-    list(APPEND app_sources "zigbee_manager.c")
+    list(APPEND app_sources "zigbee_manager.c" "zigbee_state_cache.c")
 endif()
 if(LIGHTGW_STAGE GREATER_EQUAL 4)
-    list(APPEND app_sources "scheduler.c")
+    list(APPEND app_sources "scheduler.c" "device_control.c" "device_state.c")
 endif()
 if(LIGHTGW_STAGE GREATER_EQUAL 5)
     list(APPEND app_sources

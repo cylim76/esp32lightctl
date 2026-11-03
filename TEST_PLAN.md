@@ -56,6 +56,15 @@
 - Wi-Fi 高吞吐下执行不少于 200 次 Zigbee 操作。
 - 连续运行至少 72 小时，记录重启、coredump、Minimum Free Heap 趋势、丢包和最大响应时间。
 
+## Phase A 统一控制专项
+
+- 烧录 `tests/phase_a_app/build2/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY` 的完整串口日志；8 项全部 PASS 才能把 C 测试运行状态从 `NOT TESTED` 改为 PASS。
+- 配对两台 Zigbee 设备（或一台设备重新配对并观察短地址变化），验证相同 endpoint 编号的状态不会串到另一 IEEE 设备。
+- 先获得 OFF，再等待超过缓存有效期或制造回读超时；新 OFF 命令不得立即使用旧 OFF 显示 `CONFIRMED`。
+- 回读超时后恢复设备并产生新报告，只有新报告到达后才能 `CONFIRMED`。
+- 连续提交超过队列深度的命令，必须出现有界 `FAILED/queue full`，不得阻塞 HTTP/Zigbee 任务或触发无限重试。
+- 同一分钟配置灯光与空调任务：灯光等待新鲜 Zigbee 确认；IR 必须等待 RMT 完成才是 `SENT`，且空调 actual state 始终为 `UNKNOWN`。
+
 ## 安全
 
 QBKG25LM 连接市电，安装、拆卸和测量必须断电并由合格电工执行。ESP32 与开关之间只能通过 Zigbee 通信，禁止任何市电端子与开发板电气连接。

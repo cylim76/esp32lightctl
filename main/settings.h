@@ -47,6 +47,7 @@ typedef struct {
 
 esp_err_t settings_init(void);
 const app_settings_t *settings_get(void);
+void settings_copy(app_settings_t *out);
 esp_err_t settings_save_wifi(const char *ssid, const char *password);
 esp_err_t settings_clear_wifi(void);
 esp_err_t settings_save_device_name(const char *device_name);

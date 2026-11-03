@@ -7,7 +7,7 @@
 - ZBOSS `esp-zboss-lib 1.6.4`
 - Espressif mDNS `1.14.1`
 - 目标：`esp32c6`，Flash：8 MB
-- 当前源码固件版本：`0.6.0-stageN`；原 Stage 1～5 已发布镜像保持不变
+- 当前源码固件版本：`0.7.0-stageN`；原 Stage 1～5 已发布镜像保持不变
 
 五个 Stage 使用同一套源码。`LIGHTGW_STAGE` 是 CMake cache 变量，每个 Stage 使用独立的 `build-stageN` 目录和该目录内独立生成的 `sdkconfig`。Stage 5 叠加 `sdkconfig.stage5` 并使用 `partitions_stage5.csv`；Stage 1～4 继续使用原 `partitions.csv`。
 
@@ -90,3 +90,21 @@ Stage 5 最小应用分区为 3,145,728 B（`0x300000`），应用镜像剩余 1
 | 5 | PASS (BUILD ONLY) | 1,470,848 B (`0x167180`) | `c1a28e4cdccdb67f52dfd4402ff1ec843efd1f17438fcb77d2385bd903a5c75a` |
 
 同时执行 `tests/check_web_js.js` 及 `tests/simulate_time_scheduler.py`，网页脚本解析和 A～L 状态机情景均为 `SIMULATED PASS`。这些结果不是开发板、DS3231、QBKG25LM 或 LG 空调的硬件 PASS。
+
+## 2026-11-03 Phase A 统一控制回归
+
+版本 `0.7.0-stageN` 使用同一固定工具链真实执行五次 `idf.py build`，均以退出码 0 完成。哈希对应本地构建目录，没有改写 `firmware/` 中既有 Stage 1～5 发布镜像。
+
+| Stage | 结果 | 应用大小 | 应用 SHA-256 |
+|---|---|---:|---|
+| 1 | PASS (BUILD ONLY) | 1,062,576 B (`0x1036b0`) | `911171a54a6bdecf141570cad366a8f8da30771809de4da15bf0f82cb01b06ae` |
+| 2 | PASS (BUILD ONLY) | 1,423,328 B (`0x15b7e0`) | `d13746218b3af66389462580666dcf5e0270fec87bba358b127f1fe4f1f32a7e` |
+| 3 | PASS (BUILD ONLY) | 1,426,624 B (`0x15c4c0`) | `da7719daeeb64fd76dc824ccbbe2dedba063a519728739b5f2a1a694fafe0557` |
+| 4 | PASS (BUILD ONLY) | 1,440,144 B (`0x15f990`) | `3a8f56faff641ca1f173346383d27591ae445d77521a350656397e97e7411263` |
+| 5 | PASS (BUILD ONLY) | 1,476,016 B (`0x1685b0`) | `b0246b04361c1f0d8ac7ec0d883858e23e8aa20a98ac14305173d75157990f35` |
+
+另外对 `tests/phase_a_app` 执行真实 ESP-IDF 构建。它直接包含生产 C 状态缓存/命令状态模块；ESP32-C6 测试镜像为 111,680 B（`0x1b440`），SHA-256 `fae55b96d6538466c4aff0b00376a96f77c027a66e1c2e955318bda342ed1288`。8 项测试还使用 `sdkconfig.qemu` 构建为 ESP32-C3，并在 ESP-IDF 官方 QEMU 9.0.0 中实际执行，全部输出 `PASS`，结果记为 `SIMULATED PASS`。C6 目标板尚未烧录运行，硬件状态仍为 `NOT TESTED`。
+
+QEMU 命令需要先安装 ESP-IDF 可选的 `qemu-riscv32` 工具，然后使用独立 `build-qemu` 目录；该模拟只验证与芯片无关的 C 状态逻辑，不验证 C6 外设或无线行为。
+
+软件侧另有：网页内联 JavaScript 解析 `SIMULATED PASS`；时间/调度 A～L、每目标 8 条/总计 56 条、v2 迁移模型均为 `SIMULATED PASS`。所有 Zigbee、RMT、DS3231 和 RF 实物行为仍为 `NOT TESTED`。

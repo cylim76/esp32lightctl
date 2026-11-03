@@ -50,5 +50,6 @@ GPIO6/7 避开本工程的 USB、BOOT、Zigbee 内部无线及 Stage 5 默认 GP
 - 手动设置后 ESP32 与重新上电读取的 RTC 一致；
 - NTP 大幅校正后，不重复已经完成的当日任务。
 
-芯片寄存器与 OSF 定义请以 [Analog Devices DS3231 数据手册](https://www.analog.com/media/en/technical-documentation/data-sheets/DS3231.pdf) 为准；I²C 驱动使用 [ESP-IDF ESP32-C6 I²C Master API](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32c6/api-reference/peripherals/i2c.html)。
+`tests/simulate_time_scheduler.py` 已覆盖首次无效时间、RTC 离线运行、长期断网、OSF、NTP 失败、时间跳变、17:59 重启、18:05 补执行、有界 Zigbee 重试、IR 故障隔离和人工重新开灯保护，结果属于 `SIMULATED PASS`。RTC/调度在目标板上的真实中断、NVS 和断电行为仍为 `NOT TESTED`。
 
+芯片寄存器与 OSF 定义请以 [Analog Devices DS3231 数据手册](https://www.analog.com/media/en/technical-documentation/data-sheets/DS3231.pdf) 为准；I²C 驱动使用 [ESP-IDF ESP32-C6 I²C Master API](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32c6/api-reference/peripherals/i2c.html)。
