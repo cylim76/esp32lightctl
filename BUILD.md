@@ -148,7 +148,13 @@ ESP32-C6 C 测试镜像同时真实构建通过；最终大小和 SHA-256 见 [Q
 | CORE_CLOUD | PASS (BUILD ONLY) | 1,494,800 B | 1,354,956 B | 215,918 B | `019b828c607fb6d6b4bf8513ba53ef01a4028dd6c025253d17b8c35ae855c1c3` |
 | FULL | PASS (BUILD ONLY) | 1,495,552 B | 1,355,696 B | 215,918 B | `36e9f1c50570dafe23e23ae40d28262ea5addb7fc8ae3239ce257c7e616b2e35` |
 
-构建结果只验证模块边界和链接；Sensor 仅完成非阻塞地址探测，RainMaker 仅完成统一控制服务适配边界，均未宣称实验功能或硬件通过。
+该表是 P1/P2 之前的历史基线：当时 Sensor 仅完成地址探测。当前传感器实现和增量构建结果见下一节；RainMaker 仍只完成统一控制服务适配边界。任何构建结果都不代表硬件通过。
+
+## P1/P2 扩展管理与传感器驱动构建（2026-11-04）
+
+`CORE_SENSOR` 在完整回归目录 `build-quality-variant-CORE_SENSOR` 执行真实 ESP-IDF 5.5.1 的 `build`、`size`、`size-components` 均通过。应用镜像 `1,532,480 B (0x176240)`，SHA-256 `49664690f1e88156f0613fb9840ded7229e12818359f6e898b9c39b3cdd0bdd5`，Flash non-RAM `1,392,126 B`，静态 DIRAM `217,848 B`，3 MiB 应用分区剩余约 51%。这次结果包含真实 BH1750/SHT31 驱动、运行时扩展 API 和 Web 页面。
+
+生产 C 测试工程同时为 ESP32-C6 构建通过，并在 Espressif QEMU 9.0.0（ESP32-C3 模型）实际运行 18 项：原有状态缓存/存储/备份 16 项，加上 BH1750 换算/滤波和 SHT31 CRC/解码 2 项，输出 `PHASE_A_C_TEST SUMMARY PASS: 18 tests`。记为 SOFTWARE TEST PASS / SIMULATED PASS，不是传感器硬件通过。
 
 ## 2026-11-04 配置备份与恢复回归（0.11.0）
 

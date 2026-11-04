@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "extension_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
@@ -468,7 +469,7 @@ static esp_err_t resources_get(httpd_req_t *req)
     cJSON_AddStringToObject(storage_json, "last_recovery", storage.last_recovery);
     cJSON *partitions = cJSON_AddArrayToObject(storage_json, "partitions");
     const storage_partition_status_t *partition_status[] = {
-        &storage.primary, &storage.runtime, &storage.ir,
+        &storage.primary, &storage.runtime, &storage.ir, &storage.sensor, &storage.cloud,
     };
     for (size_t i = 0; i < sizeof(partition_status) / sizeof(partition_status[0]); ++i) {
         const storage_partition_status_t *p = partition_status[i];
@@ -616,6 +617,190 @@ static esp_err_t time_manual_post(httpd_req_t *req)
     cJSON_Delete(j);
     return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"ESP32 time set; inspect RTC status for DS3231 write result\"}") :
                            send_json_error(req, "400 Bad Request", esp_err_to_name(err));
+}
+
+static void add_extension_module_json(cJSON *parent, const char *name,
+                                      const extension_module_status_t *status)
+{
+    cJSON *item = cJSON_AddObjectToObject(parent, name);
+    cJSON_AddBoolToObject(item, "included", status->included);
+    cJSON_AddBoolToObject(item, "enabled", status->enabled);
+    cJSON_AddBoolToObject(item, "running", status->running);
+    cJSON_AddBoolToObject(item, "online", status->online);
+    cJSON_AddBoolToObject(item, "data_valid", status->data_valid);
+    cJSON_AddBoolToObject(item, "restart_required", status->restart_required);
+    cJSON_AddNumberToObject(item, "last_success_uptime_ms", status->last_success_uptime_ms);
+    cJSON_AddStringToObject(item, "last_error", status->last_error);
+}
+
+static esp_err_t extensions_get(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    extension_manager_snapshot_t snapshot;
+    extension_manager_get_snapshot(&snapshot);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return ESP_ERR_NO_MEM;
+    cJSON_AddTrueToObject(root, "ok");
+    cJSON *modules = cJSON_AddObjectToObject(root, "modules");
+    add_extension_module_json(modules, "bh1750", &snapshot.modules[EXTENSION_MODULE_BH1750]);
+    add_extension_module_json(modules, "sht31", &snapshot.modules[EXTENSION_MODULE_SHT31]);
+    add_extension_module_json(modules, "rainmaker", &snapshot.modules[EXTENSION_MODULE_RAINMAKER]);
+
+    cJSON *bh = cJSON_AddObjectToObject(root, "bh1750");
+    cJSON_AddNumberToObject(bh, "lux", snapshot.bh1750.lux);
+    cJSON_AddNumberToObject(bh, "filtered_lux", snapshot.bh1750.filtered_lux);
+    cJSON_AddBoolToObject(bh, "night_anomaly", snapshot.bh1750.night_anomaly);
+    cJSON_AddNumberToObject(bh, "sample_period_seconds", snapshot.bh1750.sample_period_seconds);
+    cJSON_AddNumberToObject(bh, "night_start_minute", snapshot.bh1750.night_start_minute);
+    cJSON_AddNumberToObject(bh, "night_end_minute", snapshot.bh1750.night_end_minute);
+    cJSON_AddNumberToObject(bh, "night_lux_threshold", snapshot.bh1750.night_lux_threshold);
+    cJSON_AddNumberToObject(bh, "consecutive_anomaly_limit", snapshot.bh1750.consecutive_anomaly_limit);
+    cJSON_AddNumberToObject(bh, "calibration_valid_mask", snapshot.bh1750.calibration_valid_mask);
+    cJSON *calibration = cJSON_AddArrayToObject(bh, "calibration_lux");
+    for (size_t i = 0; i < 5; ++i) {
+        cJSON_AddItemToArray(calibration, cJSON_CreateNumber(snapshot.bh1750.calibration_lux[i]));
+    }
+    cJSON *bh_history = cJSON_AddArrayToObject(bh, "history");
+    for (size_t i = 0; i < snapshot.bh1750.history_count; ++i) {
+        cJSON *sample = cJSON_CreateObject();
+        cJSON_AddNumberToObject(sample, "uptime_ms", snapshot.bh1750.history[i].uptime_ms);
+        cJSON_AddNumberToObject(sample, "lux", snapshot.bh1750.history[i].value_1);
+        cJSON_AddNumberToObject(sample, "filtered_lux", snapshot.bh1750.history[i].value_2);
+        cJSON_AddItemToArray(bh_history, sample);
+    }
+
+    cJSON *sht = cJSON_AddObjectToObject(root, "sht31");
+    cJSON_AddNumberToObject(sht, "temperature_c", snapshot.sht31.temperature_c);
+    cJSON_AddNumberToObject(sht, "humidity_percent", snapshot.sht31.humidity_percent);
+    cJSON_AddStringToObject(sht, "temperature_trend", snapshot.sht31.temperature_trend ?: "UNKNOWN");
+    cJSON_AddNumberToObject(sht, "sample_period_seconds", snapshot.sht31.sample_period_seconds);
+    cJSON *sht_history = cJSON_AddArrayToObject(sht, "history");
+    for (size_t i = 0; i < snapshot.sht31.history_count; ++i) {
+        cJSON *sample = cJSON_CreateObject();
+        cJSON_AddNumberToObject(sample, "uptime_ms", snapshot.sht31.history[i].uptime_ms);
+        cJSON_AddNumberToObject(sample, "temperature_c", snapshot.sht31.history[i].value_1);
+        cJSON_AddNumberToObject(sample, "humidity_percent", snapshot.sht31.history[i].value_2);
+        cJSON_AddItemToArray(sht_history, sample);
+    }
+    char *text = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = text ? httpd_resp_sendstr(req, text) : ESP_ERR_NO_MEM;
+    free(text);
+    cJSON_Delete(root);
+    return err;
+}
+
+static bool parse_extension_module(const char *name, extension_module_id_t *module)
+{
+    if (!name || !module) return false;
+    if (strcmp(name, "bh1750") == 0) *module = EXTENSION_MODULE_BH1750;
+    else if (strcmp(name, "sht31") == 0) *module = EXTENSION_MODULE_SHT31;
+    else if (strcmp(name, "rainmaker") == 0) *module = EXTENSION_MODULE_RAINMAKER;
+    else return false;
+    return true;
+}
+
+static esp_err_t extension_toggle_post(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *name = json ? cJSON_GetObjectItem(json, "module") : NULL;
+    cJSON *enabled = json ? cJSON_GetObjectItem(json, "enabled") : NULL;
+    extension_module_id_t module;
+    if (!cJSON_IsString(name) || !cJSON_IsBool(enabled) ||
+        !parse_extension_module(name->valuestring, &module)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "module and boolean enabled are required");
+    }
+    bool restart_required = false;
+    esp_err_t err = extension_manager_set_enabled(module, cJSON_IsTrue(enabled), &restart_required);
+    cJSON_Delete(json);
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        return send_json_error(req, "409 Conflict", "Module is not included in this firmware");
+    }
+    if (err != ESP_OK) return send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+    cJSON *reply = cJSON_CreateObject();
+    cJSON_AddTrueToObject(reply, "ok");
+    cJSON_AddBoolToObject(reply, "restart_required", restart_required);
+    cJSON_AddStringToObject(reply, "message", restart_required ?
+                            "Setting saved; a controlled restart is required" :
+                            "Module state changed without restarting Core");
+    char *text = cJSON_PrintUnformatted(reply);
+    httpd_resp_set_type(req, "application/json");
+    err = text ? httpd_resp_sendstr(req, text) : ESP_ERR_NO_MEM;
+    free(text);
+    cJSON_Delete(reply);
+    return err;
+}
+
+static bool json_integer_in_range(cJSON *item, int minimum, int maximum)
+{
+    return cJSON_IsNumber(item) && item->valuedouble == item->valueint &&
+           item->valueint >= minimum && item->valueint <= maximum;
+}
+
+static esp_err_t bh1750_config_post(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *period = json ? cJSON_GetObjectItem(json, "sample_period_seconds") : NULL;
+    cJSON *start = json ? cJSON_GetObjectItem(json, "night_start_minute") : NULL;
+    cJSON *end = json ? cJSON_GetObjectItem(json, "night_end_minute") : NULL;
+    cJSON *threshold = json ? cJSON_GetObjectItem(json, "night_lux_threshold") : NULL;
+    cJSON *limit = json ? cJSON_GetObjectItem(json, "consecutive_anomaly_limit") : NULL;
+    if (!json_integer_in_range(period, 10, 300) || !json_integer_in_range(start, 0, 1439) ||
+        !json_integer_in_range(end, 0, 1439) || !cJSON_IsNumber(threshold) ||
+        threshold->valuedouble < 0.0 || threshold->valuedouble > 10000.0 ||
+        !json_integer_in_range(limit, 1, 20)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "Invalid BH1750 configuration");
+    }
+    extension_bh1750_view_t config = {
+        .sample_period_seconds = period->valueint,
+        .night_start_minute = start->valueint,
+        .night_end_minute = end->valueint,
+        .night_lux_threshold = (float)threshold->valuedouble,
+        .consecutive_anomaly_limit = limit->valueint,
+    };
+    esp_err_t err = extension_manager_set_bh1750_config(&config);
+    cJSON_Delete(json);
+    if (err == ESP_ERR_NOT_SUPPORTED) return send_json_error(req, "409 Conflict", "BH1750 is not included");
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") :
+                           send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+}
+
+static esp_err_t bh1750_calibrate_post(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *scene = json ? cJSON_GetObjectItem(json, "scene") : NULL;
+    if (!json_integer_in_range(scene, 0, 4)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "scene must be 0..4");
+    }
+    esp_err_t err = extension_manager_record_bh1750_calibration(scene->valueint);
+    cJSON_Delete(json);
+    if (err == ESP_ERR_NOT_SUPPORTED) return send_json_error(req, "409 Conflict", "BH1750 is not included");
+    if (err == ESP_ERR_INVALID_STATE) return send_json_error(req, "409 Conflict", "No valid current Lux sample");
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") :
+                           send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+}
+
+static esp_err_t sht31_config_post(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *period = json ? cJSON_GetObjectItem(json, "sample_period_seconds") : NULL;
+    if (!json_integer_in_range(period, 30, 60)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "SHT31 period must be 30..60 seconds");
+    }
+    esp_err_t err = extension_manager_set_sht31_config(period->valueint);
+    cJSON_Delete(json);
+    if (err == ESP_ERR_NOT_SUPPORTED) return send_json_error(req, "409 Conflict", "SHT31 is not included");
+    return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") :
+                           send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
 }
 
 #if LIGHTGW_HAS_ZIGBEE
@@ -836,7 +1021,7 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 24;
+    cfg.max_uri_handlers = 30;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
@@ -851,6 +1036,11 @@ esp_err_t web_server_start(void)
         {.uri = "/api/wifi/reconfigure", .method = HTTP_POST, .handler = wifi_reconfigure_post},
         {.uri = "/api/time/ntp", .method = HTTP_POST, .handler = time_ntp_post},
         {.uri = "/api/time/manual", .method = HTTP_POST, .handler = time_manual_post},
+        {.uri = "/api/extensions", .method = HTTP_GET, .handler = extensions_get},
+        {.uri = "/api/extensions/toggle", .method = HTTP_POST, .handler = extension_toggle_post},
+        {.uri = "/api/extensions/bh1750/config", .method = HTTP_POST, .handler = bh1750_config_post},
+        {.uri = "/api/extensions/bh1750/calibrate", .method = HTTP_POST, .handler = bh1750_calibrate_post},
+        {.uri = "/api/extensions/sht31/config", .method = HTTP_POST, .handler = sht31_config_post},
 #if LIGHTGW_HAS_ZIGBEE
         {.uri = "/api/pair", .method = HTTP_POST, .handler = pair_post},
 #endif

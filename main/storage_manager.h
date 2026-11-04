@@ -23,6 +23,8 @@ typedef struct {
     storage_partition_status_t primary;
     storage_partition_status_t runtime;
     storage_partition_status_t ir;
+    storage_partition_status_t sensor;
+    storage_partition_status_t cloud;
     uint32_t write_attempts;
     uint32_t writes_committed;
     uint32_t writes_skipped;
@@ -46,4 +48,3 @@ void storage_manager_record_corruption(const char *partition_name, const char *d
 
 /* Destructive and only called by the explicitly confirmed Web factory-reset API. */
 esp_err_t storage_manager_factory_reset(const char *confirmation);
-

@@ -9,7 +9,7 @@ Core 是办公室节能系统的长期稳定边界，包含 Wi-Fi、Web、NVS、
 | 变体 | Sensor 扩展 | RainMaker 扩展 | 当前软件状态 |
 |---|---|---|---|
 | `CORE` | 否 | 否 | Core 完整编译；硬件验证仍按测试记录 |
-| `CORE_SENSOR` | 是 | 否 | 仅安全探测 BH1750/SHT31；采样和趋势数据尚未实现 |
+| `CORE_SENSOR` | 是 | 否 | 真实 BH1750 Lux、SHT31 温湿度/CRC/趋势、运行时独立启停；硬件 NOT TESTED |
 | `CORE_CLOUD` | 否 | 是 | Device Control 适配边界已编译；RainMaker 传输/配网尚未实现 |
 | `FULL` | 是 | 是 | 三个实验组件同时编译；不能视为功能实测通过 |
 
@@ -37,7 +37,7 @@ idf.py -B build-variant-CORE -D LIGHTGW_VARIANT=CORE build
 ## 未启用模块的资源边界
 
 - `CORE` 不把扩展目录加入 `EXTRA_COMPONENT_DIRS`，不会编译扩展源文件、执行初始化、创建扩展任务或分配扩展缓冲。
-- 当前 BH1750 与 SHT31 扩展各自只在启动时使用 Core 共享 I²C 总线探测地址，不创建任务、不保存历史数据、不写 NVS。
+- BH1750 与 SHT31 在用户启用时各创建一个采样任务，通过 Core 共享 I²C 总线读取；禁用时终止任务并释放 device handle。每个传感器只保留 20 条 RAM 历史，配置写独立 `sensor_nvs`，采样不写 Flash。
 - 当前 RainMaker 扩展只验证单向控制 API 边界，并明确返回 `ESP_ERR_NOT_SUPPORTED`；失败只记诊断，不影响 Core 启动。
 - 后续加入真正 RainMaker 依赖时，依赖清单必须留在 `extensions/rainmaker` 内，不得加入 `main/idf_component.yml`。
 

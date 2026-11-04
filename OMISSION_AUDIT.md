@@ -8,18 +8,18 @@
 | P0 QEMU 数量 | 实际 16 项，工作流硬编码 15 | NOT IMPLEMENTED / CI FAIL | `.github/workflows/quality.yml` | 不硬编码数量；存在 PASS 汇总、无 FAIL，QEMU Job PASS |
 | 四种编译变体 | CORE、CORE_SENSOR、CORE_CLOUD、FULL 已隔离构建 | IMPLEMENTED / BUILD PASS | 回归 `CMakeLists.txt`、Kconfig、变体 defaults | 四种独立 build/size/size-components PASS |
 | Core 不依赖扩展 | 扩展为独立组件，CORE 不加入组件目录 | IMPLEMENTED / SOFTWARE TEST PASS | 持续回归 `tests/test_variant_contract.py` | 删除/禁用扩展后 CORE 构建；目标板核心功能 NOT TESTED |
-| Web 扩展管理 | 无页面、API、统一状态结构 | NOT IMPLEMENTED | `main/extension_manager.*`、`main/web_server.c`、`main/web/index.html` | 三模块独立启停、未编译按钮禁用、状态字段和认证 API 测试 |
-| 扩展启用状态持久化 | 只有命名空间常量，未读写 `sensor_nvs/cloud_nvs` | NOT IMPLEMENTED | 扩展配置模块、存储管理、迁移测试 | 仅变更时写 NVS；重启恢复；损坏配置不影响 Core |
-| BH1750 驱动 | 仅 I²C 地址探测 | PARTIALLY IMPLEMENTED | `extensions/bh1750/*`、Web、测试 | 命令/读取/换算/滤波/重试/20 点趋势的软件测试；实物 NOT TESTED |
-| BH1750 标定与夜间异常 | 无配置、记录和检测 | NOT IMPLEMENTED | BH1750 配置、Web、NVS、备份 | 五种场景标定；阈值/时段/连续次数；只报告整体异常 |
-| SHT31 驱动 | 仅 I²C 地址探测 | PARTIALLY IMPLEMENTED | `extensions/sht31/*`、Web、测试 | 测量命令、CRC、趋势、重试软件测试；实物 NOT TESTED |
+| Web 扩展管理 | 三模块独立状态、认证 API、页面和未编译保护已完成 | IMPLEMENTED / SOFTWARE TEST PASS / BUILD PASS | `main/extension_manager.*`、`main/web_server.c`、`main/web/index.html` | 实机启停、重启恢复和 Heap 无泄漏仍 NOT TESTED |
+| 扩展启用状态持久化 | 独立 key 写入 `sensor_nvs/cloud_nvs`，未变化跳过 | IMPLEMENTED / SOFTWARE TEST PASS | `main/extension_manager.c`、存储诊断 | 真实掉电与损坏分区恢复 NOT TESTED |
+| BH1750 驱动 | 真实模式设置、读取、换算、中位滤波、重试和 20 点 RAM 历史 | IMPLEMENTED / SOFTWARE TEST PASS / BUILD PASS | `extensions/bh1750/*`、Web、测试 | 数值精度与实物掉线恢复 NOT TESTED |
+| BH1750 标定与夜间异常 | 五场景标定、时段/阈值/连续次数和整体异常已实现 | IMPLEMENTED / BUILD PASS | BH1750 配置、Web、NVS；备份在 P4 完成 | 实际办公室阈值校准 NOT TESTED |
+| SHT31 驱动 | 真实 `0x2400` 测量、双 CRC、趋势、重试和 20 点 RAM 历史 | IMPLEMENTED / SOFTWARE TEST PASS / BUILD PASS | `extensions/sht31/*`、Web、测试 | 精度、拔插及总线并发 NOT TESTED |
 | RainMaker Classic | 适配层返回 `ESP_ERR_NOT_SUPPORTED` | NOT IMPLEMENTED | `extensions/rainmaker/*`、组件依赖、独立示例与测试 | 真实 Claiming/TLS/MQTT/App 控制日志；本地 Core 断云回归 |
 | Cloud Control ON/OFF | 统一服务当前主要按关闭目标调用 | PARTIALLY IMPLEMENTED | `device_control.*`、RainMaker 适配、Zigbee 状态同步 | 三路 ON/OFF、全部 OFF、三种 IR OFF；不虚报空调状态 |
 | 扩展配置备份 | v1 只有空 `non_sensitive_settings` | PARTIALLY IMPLEMENTED | `backup_restore.*`、扩展配置版本/迁移测试 | v1 兼容；扩展设置 round-trip；秘密字段持续排除；掉电回滚 |
 | FULL→CORE→FULL | 分区地址与回退流程已设计 | PARTIALLY IMPLEMENTED / NOT TESTED | 回归分区、`ROLLBACK.md`、硬件记录 | 核心数据保持；扩展数据保留；不得擦除；实物演练 |
 | Heap/栈/Flash | 静态 size 与核心诊断已存在 | PARTIALLY IMPLEMENTED | 传感器/RainMaker事件监测和报告 | 启停、TLS、采样峰值；泄漏与长期趋势硬件测试 |
-| MODULE_MANAGEMENT.md | 文件不存在 | NOT IMPLEMENTED | 新增文档 | 与实际 API、状态机和限制一致 |
-| Sensor/RainMaker 文档 | 指定文档不存在 | NOT IMPLEMENTED | 新增五份文档并更新既有报告 | 每项标明 IMPLEMENTED/BUILD/SOFTWARE/HARDWARE 状态 |
+| MODULE_MANAGEMENT.md | 已与运行时 API、NVS key 和限制同步 | IMPLEMENTED | 持续随接口更新 | 文档契约检查 |
+| Sensor/RainMaker 文档 | Sensor 两份已完成；RainMaker 三份等待 P3 实证 | PARTIALLY IMPLEMENTED | `SENSOR_WIRING.md`、`ENVIRONMENT_MONITORING.md`、P3 文档 | 每项标明 IMPLEMENTED/BUILD/SOFTWARE/HARDWARE 状态 |
 | 稳定 Git Tag | 未创建，符合“硬件通过后再创建” | NOT TESTED / 正确保留 | 硬件验收后才操作 | CORE 实机完整验收通过后创建不可移动标签 |
 
 ## 实施边界

@@ -9,6 +9,7 @@ set(app_sources
     "storage_manager.c"
     "backup_integrity.c"
     "backup_restore.c"
+    "extension_manager.c"
 )
 set(app_requires
     esp_coex esp_event esp_http_server esp_netif esp_system esp_timer esp_wifi espcoredump
@@ -49,9 +50,6 @@ endif()
 # which sdkconfig symbols are not guaranteed to be available. Derive the
 # dependency graph from the cache-selected variant so an enabled extension can
 # never be compiled without its component dependency.
-if(lightgw_bh1750_extension OR lightgw_sht31_extension OR lightgw_rainmaker_extension)
-    list(APPEND app_sources "extension_manager.c")
-endif()
 if(lightgw_bh1750_extension)
     list(APPEND app_requires bh1750)
 endif()

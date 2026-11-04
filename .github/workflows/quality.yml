@@ -23,6 +23,7 @@ jobs:
       - run: python tests/test_backup_contract.py
       - run: python tests/test_backup_restore.py
       - run: python tests/test_ci_workflow.py
+      - run: python tests/test_extension_runtime_contract.py
       - run: python tests/simulate_time_scheduler.py
       - run: node tests/check_web_js.js
 

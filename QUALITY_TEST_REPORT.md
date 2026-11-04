@@ -146,4 +146,15 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - 导入两组真实 LG 码后的空调响应、新板 Aqara 重新配对/端点确认：NOT TESTED。
 - 扩展模块当前没有用户可调参数；备份只携带独立 schema 和空设置对象。未来增加参数时必须同时增加版本迁移和 round-trip 测试。
 
+## P1/P2 增量结果（2026-11-04）
+
+- Web 扩展管理契约：PASS。验证三个独立 NVS key、未编译模块拒绝、认证写 API、页面状态语义和 Core 隔离。
+- Web 内联 JavaScript 解析：PASS。
+- BH1750 协议 C 测试：换算、范围拒绝、中位滤波 PASS。
+- SHT31 协议 C 测试：已知 CRC、温湿度解码、损坏 CRC 拒绝 PASS。
+- QEMU：18/18 PASS；ESP32-C6 测试镜像 BUILD PASS。
+- `CORE_SENSOR` 真实 `idf.py build`：PASS。
+- 真实 BH1750/SHT31、共享 I²C、运行时反复启停、长期 Heap 与数值精度：NOT TESTED。
+- 扩展设置尚未加入 JSON 备份；P4 前保持 PARTIALLY IMPLEMENTED，不把空占位对象描述为完成。
+
 本功能没有破坏性数据迁移，不会擦除任何整个分区。SHA-256 是完整性检查而非数字签名；HTTP Basic 无 TLS，只能在可信本地网络或安全通道使用。

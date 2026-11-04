@@ -3,10 +3,12 @@
 #include <string.h>
 #include "device_state.h"
 #include "backup_integrity.h"
+#include "bh1750_protocol.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
 #include "scheduler_persistence.h"
+#include "sht31_protocol.h"
 #include "zigbee_state_cache.h"
 
 static const uint8_t IEEE_A[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -336,6 +338,33 @@ static void test_backup_sha256_and_tamper_detection(void)
     CHECK(!backup_integrity_sha256_matches(data, sizeof(data), "bad"));
 }
 
+static void test_bh1750_decode_validation_and_filter(void)
+{
+    float lux = bh1750_protocol_decode_lux(0x01, 0x20);
+    CHECK(lux > 239.99f && lux < 240.01f);
+    CHECK(bh1750_protocol_lux_valid(lux));
+    CHECK(!bh1750_protocol_lux_valid(-0.1f));
+    CHECK(!bh1750_protocol_lux_valid(100001.0f));
+    float noisy[3] = {240.0f, 9000.0f, 241.0f};
+    float filtered = bh1750_protocol_median(noisy, 3);
+    CHECK(filtered > 240.99f && filtered < 241.01f);
+}
+
+static void test_sht31_crc_and_decode(void)
+{
+    const uint8_t known[2] = {0xBE, 0xEF};
+    CHECK(sht31_protocol_crc8(known, sizeof(known)) == 0x92);
+    uint8_t frame[6] = {0x66, 0x66, 0, 0x80, 0x00, 0};
+    frame[2] = sht31_protocol_crc8(frame, 2);
+    frame[5] = sht31_protocol_crc8(frame + 3, 2);
+    float temperature = 0.0f, humidity = 0.0f;
+    CHECK(sht31_protocol_decode(frame, &temperature, &humidity));
+    CHECK(temperature > 24.9f && temperature < 25.1f);
+    CHECK(humidity > 49.9f && humidity < 50.1f);
+    frame[5] ^= 1;
+    CHECK(!sht31_protocol_decode(frame, &temperature, &humidity));
+}
+
 void app_main(void)
 {
     RUN(test_multi_device_isolation);
@@ -354,6 +383,8 @@ void app_main(void)
     RUN(test_scheduler_all_56_entries_restart);
     RUN(test_scheduler_high_frequency_identical_updates);
     RUN(test_backup_sha256_and_tamper_detection);
+    RUN(test_bh1750_decode_validation_and_filter);
+    RUN(test_sht31_crc_and_decode);
     printf("PHASE_A_C_TEST SUMMARY PASS: %u tests\n", s_passed);
     for (;;) vTaskDelay(portMAX_DELAY);
 }

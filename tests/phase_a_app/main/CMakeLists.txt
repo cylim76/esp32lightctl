@@ -5,6 +5,11 @@ idf_component_register(
         "../../../main/device_state.c"
         "../../../main/scheduler_persistence.c"
         "../../../main/backup_integrity.c"
-    INCLUDE_DIRS "../../../main"
+        "../../../extensions/bh1750/bh1750_protocol.c"
+        "../../../extensions/sht31/sht31_protocol.c"
+    INCLUDE_DIRS
+        "../../../main"
+        "../../../extensions/bh1750/include"
+        "../../../extensions/sht31/include"
     REQUIRES mbedtls nvs_flash
 )

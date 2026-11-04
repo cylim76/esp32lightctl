@@ -43,7 +43,7 @@
 | HW-408 | 5 | 1W 模块供电压降及 ESP32 复位 | NOT TESTED | — | 不假设板载5V可提供350mA |
 | HW-409 | 5 | 红外功能72小时稳定性 | NOT TESTED | — | 等待硬件 |
 | HW-410 | 5 | 空调1/空调2/共享组各最多8条独立定时 | NOT TESTED | — | 只用已确认 OFF 码，状态不声称已关闭 |
-| HW-411 | 4/5 | Phase A/存储/备份完整性 C 测试固件 16 项在目标板执行 | NOT TESTED | — | C6 测试镜像已 BUILD PASS；QEMU 16 项 SIMULATED PASS（含 NO_MEM 与备份篡改检测），尚未烧录 C6 |
+| HW-411 | 4/5 | Phase A/存储/备份/传感器协议 C 测试固件 18 项在目标板执行 | NOT TESTED | — | C6 测试镜像已 BUILD PASS；QEMU 18 项 SOFTWARE/SIMULATED PASS，尚未烧录 C6 |
 | HW-412 | 4 | 多 Zigbee 设备/端点状态隔离与短地址复用 | NOT TESTED | — | 旧 OFF 不得串设备或确认新命令 |
 | HW-413 | 4 | 缓存过期、主动回读超时及恢复后新反馈 | NOT TESTED | — | 页面应为 UNKNOWN/FAILED，收到新反馈后再确认 |
 | HW-414 | 5 | IR 入队、RMT 完成、失败和结果超时状态链 | NOT TESTED | — | SENT 仍不代表空调已关闭 |
@@ -51,7 +51,7 @@
 | HW-416 | 2 | Wi-Fi/Zigbee 共存、建网及 Permit Join 内存峰值 | NOT TESTED | — | 对照关键内存事件和 RF 日志 |
 | HW-417 | 3 | Zigbee announce、端点/Cluster 发现内存峰值 | NOT TESTED | — | 保存发现完成/失败前后数据 |
 | HW-418 | 4 | 三路控制、状态回读和调度并发内存/任务栈 | NOT TESTED | — | 包含回读超时和多个同分钟任务 |
-| HW-419 | 5 | RMT 学习/发射及三个 I2C 设备并发资源峰值 | NOT TESTED | — | 同时运行 Wi-Fi、Zigbee、Web；传感器尚未集成 |
+| HW-419 | 5 | RMT 学习/发射及三个 I2C 设备并发资源峰值 | NOT TESTED | — | 传感器软件已集成；同时运行 Wi-Fi、Zigbee、Web 的实机峰值待测 |
 | HW-420 | 6 | RainMaker TLS 握手、MQTT 首连及重连内存峰值 | NOT TESTED | — | Stage 6 尚未实现 |
 | HW-421 | 1～5 | 各 Stage 72 小时/7 天 Heap、Largest Block、最低 HWM 趋势 | NOT TESTED | — | 各自独立记录，不用编译结果代替 |
 | HW-422 | 6 | 双 OTA 升级、回滚及 NVS/Zigbee/IR 数据迁移 | NOT TESTED | — | 当前仅有候选分区规划，尚未启用 |
@@ -68,5 +68,10 @@
 | HW-433 | 1～5 | 管理员认证后的配置导出、上传限流、48 KiB 限制与两阶段确认 | NOT TESTED | — | 浏览器和目标板 Web 实测待执行；仅在可信局域网使用 |
 | HW-434 | 1～5 | 配置导入写入中断电后的事务回滚 | NOT TESTED | — | 主配置、56 条任务和两组 IR 码都必须恢复到导入前状态 |
 | HW-435 | 3～5 | 新开发板导入备份后重新配对、重新发现端点并验证两组 LG OFF 码 | NOT TESTED | — | 禁止把旧 Zigbee 映射或配对信息当作有效网络数据恢复 |
+| HW-436 | Sensor | BH1750 实际 Lux、五场景标定与整体夜间异常 | NOT TESTED | — | 单传感器不得断言具体灯路 |
+| HW-437 | Sensor | SHT31 温湿度、CRC 错误、趋势与拔插恢复 | NOT TESTED | — | 不得把温度趋势虚报为空调状态 |
+| HW-438 | Sensor | BH1750/SHT31 独立启停、重启恢复与旧数据失效 | NOT TESTED | — | 记录 Heap、任务 HWM 和 NVS 写入计数 |
+| HW-439 | Sensor | DS3231+BH1750+SHT31 GPIO6/7 共享总线 | NOT TESTED | — | 检查上拉电压、地址、OSF 与并发恢复 |
+| HW-440 | Variants | CORE 页面显示扩展未包含且按钮禁用 | NOT TESTED | — | Core 控制必须继续正常 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。

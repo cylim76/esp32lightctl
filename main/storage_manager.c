@@ -22,6 +22,8 @@ static storage_partition_status_t *find_partition_status(const char *name)
     if (!name || strcmp(name, "nvs") == 0) return &s_status.primary;
     if (strcmp(name, APP_RUNTIME_STORAGE_PARTITION) == 0) return &s_status.runtime;
     if (strcmp(name, APP_IR_STORAGE_PARTITION) == 0) return &s_status.ir;
+    if (strcmp(name, APP_SENSOR_STORAGE_PARTITION) == 0) return &s_status.sensor;
+    if (strcmp(name, APP_CLOUD_STORAGE_PARTITION) == 0) return &s_status.cloud;
     return NULL;
 }
 
@@ -126,6 +128,8 @@ void storage_manager_refresh_stats(void)
     refresh_one(&s_status.primary);
     refresh_one(&s_status.runtime);
     refresh_one(&s_status.ir);
+    refresh_one(&s_status.sensor);
+    refresh_one(&s_status.cloud);
 }
 
 void storage_manager_get_status(storage_status_t *status)
