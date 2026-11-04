@@ -52,7 +52,7 @@
 | HW-417 | 3 | Zigbee announce、端点/Cluster 发现内存峰值 | NOT TESTED | — | 保存发现完成/失败前后数据 |
 | HW-418 | 4 | 三路控制、状态回读和调度并发内存/任务栈 | NOT TESTED | — | 包含回读超时和多个同分钟任务 |
 | HW-419 | 5 | RMT 学习/发射及三个 I2C 设备并发资源峰值 | NOT TESTED | — | 传感器软件已集成；同时运行 Wi-Fi、Zigbee、Web 的实机峰值待测 |
-| HW-420 | 6 | RainMaker TLS 握手、MQTT 首连及重连内存峰值 | NOT TESTED | — | Stage 6 尚未实现 |
+| HW-420 | Cloud | RainMaker TLS 握手、MQTT 首连及重连内存峰值 | NOT TESTED | — | SDK/固件已集成，仅静态 size 已测；必须采集实机事件峰值 |
 | HW-421 | 1～5 | 各 Stage 72 小时/7 天 Heap、Largest Block、最低 HWM 趋势 | NOT TESTED | — | 各自独立记录，不用编译结果代替 |
 | HW-422 | 6 | 双 OTA 升级、回滚及 NVS/Zigbee/IR 数据迁移 | NOT TESTED | — | 当前仅有候选分区规划，尚未启用 |
 | HW-423 | 1～5 | 主 NVS/runtime NVS 空间不足且不自动擦除 | NOT TESTED | — | 页面 stats、串口错误、配置保留均需实测 |
@@ -61,7 +61,7 @@
 | HW-426 | 1～5 | 用户确认恢复出厂设置及部分擦除失败处理 | NOT TESTED | — | 仅使用测试设备；确认文本必须精确匹配 |
 | HW-427 | 5 | CORE 构建无扩展初始化/任务/专用缓冲 | NOT TESTED | — | 软件构建图已隔离，目标板待验证 |
 | HW-428 | 5 | CORE_SENSOR 缺失 BH1750/SHT31 时 Core 正常启动 | NOT TESTED | — | 缺失只能记录诊断 |
-| HW-429 | 5 | CORE_CLOUD/FULL 云不可用时本地控制与调度正常 | NOT TESTED | — | RainMaker 传输尚未实现 |
+| HW-429 | 5/Cloud | CORE_CLOUD/FULL 云不可用时本地控制与调度正常 | NOT TESTED | — | 传输路径已实现；断云隔离和重连须实机验证 |
 | HW-430 | 5 | FULL→CORE 保留 Wi-Fi/Zigbee/IR/RTC/56 条任务 | NOT TESTED | — | 先按 ROLLBACK.md 完整备份 |
 | HW-431 | 5 | 移除 BH1750/SHT31 后 DS3231 共享 I²C 正常 | NOT TESTED | — | 记录总线和 OSF 日志 |
 | HW-432 | 5 | 8 MiB 备份、变体回退及恢复演练 | NOT TESTED | — | 禁止 erase-flash，校验所有 SHA-256 |

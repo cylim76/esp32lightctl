@@ -120,7 +120,7 @@ Stage 1～5 的 `idf.py size` / `size-components` 结果、运行时内存测试
 
 Flash/NVS 写入点、分区用途、非破坏性恢复策略和迁移风险见 [STORAGE_AUDIT.md](STORAGE_AUDIT.md)；本轮编译、QEMU C 测试、接口检查及未验证项见 [QUALITY_TEST_REPORT.md](QUALITY_TEST_REPORT.md)。开发修改后应运行 `check-all.bat`；它会执行源码存储策略检查、Web/变体接口检查、时间模型、JavaScript 解析、C6 测试固件构建、Stage 1～5 以及四种固件变体的 build/size/size-components。Node.js 不在 PATH 时通过 `NODE_EXE` 指定完整路径。
 
-模块化构建见 [FIRMWARE_VARIANTS.md](FIRMWARE_VARIANTS.md)，运行时启停见 [MODULE_MANAGEMENT.md](MODULE_MANAGEMENT.md)，传感器接线与语义见 [SENSOR_WIRING.md](SENSOR_WIRING.md) 和 [ENVIRONMENT_MONITORING.md](ENVIRONMENT_MONITORING.md)，安全移除与回退见 [ROLLBACK.md](ROLLBACK.md)。BH1750/SHT31 驱动与 Web 管理已实现并通过软件测试，但硬件仍为 NOT TESTED；RainMaker 真实云传输仍为 NOT IMPLEMENTED。
+模块化构建见 [FIRMWARE_VARIANTS.md](FIRMWARE_VARIANTS.md)，运行时启停见 [MODULE_MANAGEMENT.md](MODULE_MANAGEMENT.md)，传感器接线与语义见 [SENSOR_WIRING.md](SENSOR_WIRING.md) 和 [ENVIRONMENT_MONITORING.md](ENVIRONMENT_MONITORING.md)，安全移除与回退见 [ROLLBACK.md](ROLLBACK.md)。BH1750/SHT31 驱动与 Web 管理已实现并通过软件测试，但硬件仍为 NOT TESTED。RainMaker Classic 的设计、账户绑定和实测边界见 [RAINMAKER_DESIGN.md](RAINMAKER_DESIGN.md)、[RAINMAKER_SETUP.md](RAINMAKER_SETUP.md) 和 [RAINMAKER_TEST_PLAN.md](RAINMAKER_TEST_PLAN.md)：SDK 集成和构建已通过，真实 Claiming/TLS/MQTT/App 仍为 CLOUD/HARDWARE NOT TESTED。
 
 配置备份格式、敏感数据排除项、事务回滚和更换开发板后的重新配对流程见 [BACKUP_RESTORE.md](BACKUP_RESTORE.md)。
 

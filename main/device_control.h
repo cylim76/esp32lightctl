@@ -11,6 +11,8 @@ esp_err_t device_control_submit_light(uint16_t short_addr, unsigned channel, boo
                                       const char *source, uint32_t *command_id);
 esp_err_t device_control_submit_target(schedule_target_t target, const char *source,
                                        uint32_t *command_id);
+esp_err_t device_control_submit_target_state(schedule_target_t target, bool on,
+                                             const char *source, uint32_t *command_id);
 esp_err_t device_control_submit_target_repeated(schedule_target_t target, uint8_t repeats,
                                                 const char *source, uint32_t *command_id);
 esp_err_t device_control_get_result(uint32_t command_id, device_command_result_t *result);

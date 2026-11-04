@@ -7,9 +7,11 @@ idf_component_register(
         "../../../main/backup_integrity.c"
         "../../../extensions/bh1750/bh1750_protocol.c"
         "../../../extensions/sht31/sht31_protocol.c"
+        "../../../extensions/rainmaker/rainmaker_control_policy.c"
     INCLUDE_DIRS
         "../../../main"
         "../../../extensions/bh1750/include"
         "../../../extensions/sht31/include"
+        "../../../extensions/rainmaker/include"
     REQUIRES mbedtls nvs_flash
 )

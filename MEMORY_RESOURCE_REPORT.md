@@ -138,4 +138,13 @@ Stage 5 的 0.8.0 基线 BIN 为 1,483,408 B；0.9.0 复测为 1,493,872 B，均
 | CORE_CLOUD | 1,512,176 | 1,372,320 | 215,942 | 16,008 / 76,192 | `231dd4a8ed67b329b24fec1d2f9fb1d6d5593bedeb25833860d73e61b4adfb28` |
 | FULL | 1,512,896 | 1,373,048 | 215,942 | 16,008 / 76,192 | `496a4c31e30e8937c74188856e98085b64b74f291d079c66aa60ee45f7d4d21c` |
 
+## P3 RainMaker 集成后静态资源（2026-11-04）
+
+| 变体 | BIN | Flash Code | 静态 DIRAM | DIRAM 剩余 | SHA-256 |
+|---|---:|---:|---:|---:|---|
+| CORE_CLOUD | 1,868,800 B | 1,727,818 B | 218,210 B（48.26%） | 233,902 B | `d3f8bf5cb18d297330c4bab16e9be194ec235c06a7d6159ee4b7238d039e5bf3` |
+| FULL | 1,877,408 B | 1,735,934 B | 219,740 B（48.60%） | 232,372 B | `d039af238725fcbe807da1022609f60a19e4ee3f3f8e456ffb60327c4c30a52b` |
+
+相对 0.11.0 占位云变体，RainMaker SDK/TLS/MQTT 使镜像明显增大；当前两个镜像仍能装入 3 MiB 应用分区并保留约 40%。这不等于运行时内存充足：TLS 首次握手、MQTT 重连、Zigbee 配对、红外学习、Web 请求和传感器并发时的 Free Heap/Largest Block/任务 HWM 尚未在 ESP32-C6 上测量，继续标为 NOT TESTED。
+
 备份候选不常驻静态 RAM：上传 body、cJSON、原生候选和回滚快照按需从堆分配；候选 2 分钟后自动释放。`runtime_nvs` 事务快照位于 Flash。导出/验证/提交已记录内存事件，但 48 KiB 最坏输入、并发 Wi-Fi/Zigbee/RMT 和堆碎片仍需 C6 实测，不能仅凭静态 DIRAM 断言余量充足。

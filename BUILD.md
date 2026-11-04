@@ -156,6 +156,17 @@ ESP32-C6 C 测试镜像同时真实构建通过；最终大小和 SHA-256 见 [Q
 
 生产 C 测试工程同时为 ESP32-C6 构建通过，并在 Espressif QEMU 9.0.0（ESP32-C3 模型）实际运行 18 项：原有状态缓存/存储/备份 16 项，加上 BH1750 换算/滤波和 SHT31 CRC/解码 2 项，输出 `PHASE_A_C_TEST SUMMARY PASS: 18 tests`。记为 SOFTWARE TEST PASS / SIMULATED PASS，不是传感器硬件通过。
 
+## P3 RainMaker Classic 增量构建（2026-11-04）
+
+使用 ESP-IDF 5.5.1、`espressif/esp_rainmaker 1.17.0`、`rmaker_common 1.9.0`，在独立目录执行真实 `build`、`size` 和 `size-components`：
+
+| 变体 | 结果 | 应用 `.bin` | Flash Code | 静态 DIRAM | 应用分区余量 | SHA-256 |
+|---|---|---:|---:|---:|---:|---|
+| CORE_CLOUD | BUILD PASS | 1,868,800 B | 1,727,818 B | 218,210 B | 1,276,928 B（40%） | `d3f8bf5cb18d297330c4bab16e9be194ec235c06a7d6159ee4b7238d039e5bf3` |
+| FULL | BUILD PASS | 1,877,408 B | 1,735,934 B | 219,740 B | 1,268,320 B（40%） | `d039af238725fcbe807da1022609f60a19e4ee3f3f8e456ffb60327c4c30a52b` |
+
+这两个镜像包含真实 RainMaker Node/Claiming/MQTT/TLS SDK 路径及本地控制适配，不再是占位实现。静态构建只能证明链接和分区容量满足当前配置；Claiming、账户绑定、TLS 握手峰值、MQTT/App 行为和断云隔离仍为 CLOUD/HARDWARE NOT TESTED。
+
 ## 2026-11-04 配置备份与恢复回归（0.11.0）
 
 `check-all.bat` 对 Stage 1～5 和四种命名变体实际执行 `build`、`size`、`size-components`，并完成存储/Web/变体/备份契约、调度模型、JavaScript 解析和 C6 测试镜像构建，最终输出 `CHECK_ALL PASS`。本轮没有覆盖 `firmware/` 中任何既有发布镜像。

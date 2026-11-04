@@ -57,9 +57,16 @@ typedef struct {
 } extension_sht31_view_t;
 
 typedef struct {
+    bool claimed;
+    bool mapping_in_progress;
+    char node_id[40];
+} extension_rainmaker_view_t;
+
+typedef struct {
     extension_module_status_t modules[EXTENSION_MODULE_COUNT];
     extension_bh1750_view_t bh1750;
     extension_sht31_view_t sht31;
+    extension_rainmaker_view_t rainmaker;
 } extension_manager_snapshot_t;
 
 /* Optional module failures are diagnosed but never fail Core startup. */
@@ -70,4 +77,5 @@ esp_err_t extension_manager_set_enabled(extension_module_id_t module, bool enabl
 esp_err_t extension_manager_set_bh1750_config(const extension_bh1750_view_t *config);
 esp_err_t extension_manager_record_bh1750_calibration(uint8_t scene);
 esp_err_t extension_manager_set_sht31_config(uint16_t sample_period_seconds);
+esp_err_t extension_manager_start_rainmaker_mapping(char *user_id, char *secret_key);
 const char *extension_manager_module_name(extension_module_id_t module);

@@ -238,6 +238,19 @@ esp_err_t device_control_submit_target(schedule_target_t target, const char *sou
     return device_control_submit_target_repeated(target, 1, source, command_id);
 }
 
+esp_err_t device_control_submit_target_state(schedule_target_t target, bool on,
+                                             const char *source, uint32_t *command_id)
+{
+    if (target >= APP_SCHEDULE_TARGET_COUNT) return ESP_ERR_INVALID_ARG;
+    /* An IR air-conditioner target only has a learned, explicit OFF code. */
+    if (on && target >= SCHEDULE_TARGET_AC_1) return ESP_ERR_NOT_SUPPORTED;
+    control_request_t request = {
+        .target = target, .short_addr = UINT16_MAX, .channel = -1,
+        .requested_on = on, .repeats = 1,
+    };
+    return submit(&request, source, command_id);
+}
+
 esp_err_t device_control_submit_target_repeated(schedule_target_t target, uint8_t repeats,
                                                 const char *source, uint32_t *command_id)
 {

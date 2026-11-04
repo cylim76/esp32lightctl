@@ -17,6 +17,7 @@ python tests\test_backup_contract.py || exit /b 1
 python tests\test_backup_restore.py || exit /b 1
 python tests\test_ci_workflow.py || exit /b 1
 python tests\test_extension_runtime_contract.py || exit /b 1
+python tests\test_rainmaker_contract.py || exit /b 1
 python tests\simulate_time_scheduler.py || exit /b 1
 
 if defined NODE_EXE goto have_node

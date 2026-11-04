@@ -157,4 +157,14 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - 真实 BH1750/SHT31、共享 I²C、运行时反复启停、长期 Heap 与数值精度：NOT TESTED。
 - 扩展设置尚未加入 JSON 备份；P4 前保持 PARTIALLY IMPLEMENTED，不把空占位对象描述为完成。
 
+## P3 RainMaker Classic 软件结果（2026-11-04）
+
+- 官方 RainMaker Classic 1.17.0 和 rmaker_common 1.9.0 固定依赖：IMPLEMENTED / BUILD PASS。
+- 三路照明 ON/OFF、全部灯 OFF、LG 空调 1/2/组明确 OFF 的控制策略 C 测试：SOFTWARE TEST PASS。
+- 云端缓存初始化值忽略、OFF 触发器释放、并发命令拒绝、空调 ON 拒绝：SOFTWARE TEST PASS。
+- 灯状态同步仅接受在线、已确认映射、未过期且未回读超时的 Zigbee 端点缓存：源码契约 PASS；真实 Zigbee/App NOT TESTED。
+- CORE_CLOUD/FULL 真实 `build`、`size`、`size-components`：BUILD PASS；详见 `BUILD.md` 与 `MEMORY_RESOURCE_REPORT.md`。
+- Claiming、用户账户绑定、TLS/MQTT、云端断线重连、手机 App 控制、受控重启后的禁用：CLOUD/HARDWARE NOT TESTED。
+- RainMaker 停用不会尝试不安全的热销毁；配置先持久化，API 明确返回 `restart_required`。受控重启行为仍需目标板验证。
+
 本功能没有破坏性数据迁移，不会擦除任何整个分区。SHA-256 是完整性检查而非数字签名；HTTP Basic 无 TLS，只能在可信本地网络或安全通道使用。

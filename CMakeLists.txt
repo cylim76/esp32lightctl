@@ -51,4 +51,12 @@ idf_build_set_property(MINIMAL_BUILD ON)
 idf_build_set_property(LIGHTGW_VARIANT_NAME "${LIGHTGW_VARIANT}")
 project(esp32c6_light_gateway)
 
+# rmaker_common 1.9.x/1.10.x checks an IDF-6 CMake version variable which is
+# not exported into component scope by IDF 5.5.1. Its intended private MQTT
+# edge is therefore lost in minimal builds. Restore that official dependency
+# without editing generated managed_components content.
+if(TARGET __idf_espressif__rmaker_common AND TARGET __idf_mqtt)
+    target_link_libraries(__idf_espressif__rmaker_common PRIVATE __idf_mqtt)
+endif()
+
 message(STATUS "esp32lightctl firmware Stage ${LIGHTGW_STAGE}, variant ${LIGHTGW_VARIANT}")

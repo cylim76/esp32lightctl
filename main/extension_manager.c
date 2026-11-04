@@ -9,6 +9,7 @@
 #include "nvs.h"
 #include "stage_config.h"
 #include "storage_manager.h"
+#include "esp_timer.h"
 
 #if LIGHTGW_HAS_BH1750_EXTENSION
 #include "bh1750_extension.h"
@@ -19,6 +20,7 @@
 #if LIGHTGW_HAS_RAINMAKER_EXTENSION
 #include "device_control.h"
 #include "rainmaker_extension.h"
+#include "zigbee_manager.h"
 #endif
 
 #define EXTENSION_MANAGER_NAMESPACE "module_mgr"
@@ -114,10 +116,74 @@ static esp_err_t persist_enabled(extension_module_id_t module, bool enabled)
 }
 
 #if LIGHTGW_HAS_RAINMAKER_EXTENSION
-static esp_err_t cloud_submit_target(uint8_t target, const char *source, uint32_t *command_id)
+static esp_err_t cloud_submit_target(uint8_t target, bool on, const char *source,
+                                     uint32_t *command_id)
 {
     if (target >= APP_SCHEDULE_TARGET_COUNT) return ESP_ERR_INVALID_ARG;
-    return device_control_submit_target((schedule_target_t)target, source, command_id);
+    return device_control_submit_target_state((schedule_target_t)target, on, source, command_id);
+}
+
+static esp_err_t cloud_get_command_result(uint32_t command_id,
+                                          rainmaker_command_result_t *result)
+{
+    if (!result) return ESP_ERR_INVALID_ARG;
+    device_command_result_t core;
+    esp_err_t err = device_control_get_result(command_id, &core);
+    if (err != ESP_OK) return err;
+    memset(result, 0, sizeof(*result));
+    result->requested_on = core.requested_on;
+    strlcpy(result->detail, core.detail, sizeof(result->detail));
+    if (!core.terminal) result->state = RAINMAKER_COMMAND_PENDING;
+    else if (core.status == DEVICE_COMMAND_CONFIRMED) result->state = RAINMAKER_COMMAND_CONFIRMED;
+    else if (core.status == DEVICE_COMMAND_SENT && core.actual_state == DEVICE_ACTUAL_UNKNOWN) {
+        result->state = RAINMAKER_COMMAND_SENT_UNCONFIRMED;
+    } else result->state = RAINMAKER_COMMAND_FAILED;
+    return ESP_OK;
+}
+
+static esp_err_t cloud_get_light_state(uint8_t target, rainmaker_light_state_t *state)
+{
+    if (!state || target > SCHEDULE_TARGET_LIGHT_RIGHT) return ESP_ERR_INVALID_ARG;
+    memset(state, 0, sizeof(*state));
+    zb_device_snapshot_t devices[APP_MAX_ZIGBEE_DEVICES];
+    size_t count = zigbee_manager_snapshot(devices, APP_MAX_ZIGBEE_DEVICES);
+    int64_t now_us = esp_timer_get_time();
+    bool found = false;
+    bool aggregate_on = false;
+    int64_t newest_us = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (!devices[i].supported || !devices[i].mapping_confirmed || !devices[i].online) continue;
+        zb_channel_status_t channel = {0};
+        if (zigbee_manager_get_channel_status(devices[i].short_addr, target, &channel) != ESP_OK ||
+            !channel.valid || channel.read_timed_out ||
+            now_us - channel.updated_us > (int64_t)APP_ZIGBEE_STATE_MAX_AGE_MS * 1000) continue;
+        found = true;
+        aggregate_on |= channel.state == ZB_CHANNEL_ON;
+        if (channel.updated_us > newest_us) newest_us = channel.updated_us;
+    }
+    state->valid = found;
+    state->on = aggregate_on;
+    state->updated_uptime_ms = newest_us / 1000;
+    return found ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+static void cloud_get_environment(rainmaker_environment_t *environment)
+{
+    if (!environment) return;
+    memset(environment, 0, sizeof(*environment));
+#if LIGHTGW_HAS_BH1750_EXTENSION
+    bh1750_extension_status_t bh;
+    bh1750_extension_get_status(&bh);
+    environment->lux_valid = bh.running && bh.online && bh.data_valid;
+    environment->lux = bh.filtered_lux;
+#endif
+#if LIGHTGW_HAS_SHT31_EXTENSION
+    sht31_extension_status_t sht;
+    sht31_extension_get_status(&sht);
+    environment->climate_valid = sht.running && sht.online && sht.data_valid;
+    environment->temperature_c = sht.temperature_c;
+    environment->humidity_percent = sht.humidity_percent;
+#endif
 }
 #endif
 
@@ -132,7 +198,13 @@ static esp_err_t start_module(extension_module_id_t module)
 #endif
 #if LIGHTGW_HAS_RAINMAKER_EXTENSION
     case EXTENSION_MODULE_RAINMAKER: {
-        const rainmaker_control_api_t api = {.submit_target = cloud_submit_target};
+        const rainmaker_control_api_t api = {
+            .submit_target = cloud_submit_target,
+            .get_command_result = cloud_get_command_result,
+            .get_light_state = cloud_get_light_state,
+            .get_environment = cloud_get_environment,
+            .environment_available = LIGHTGW_HAS_BH1750_EXTENSION || LIGHTGW_HAS_SHT31_EXTENSION,
+        };
         return rainmaker_extension_start(&api);
     }
 #endif
@@ -309,9 +381,25 @@ void extension_manager_get_snapshot(extension_manager_snapshot_t *snapshot)
     cloud->running = cloud_status.running;
     cloud->online = cloud_status.online;
     cloud->last_success_uptime_ms = cloud_status.last_success_uptime_ms;
+    snapshot->rainmaker.claimed = cloud_status.claimed;
+    snapshot->rainmaker.mapping_in_progress = cloud_status.mapping_in_progress;
+    strlcpy(snapshot->rainmaker.node_id, cloud_status.node_id,
+            sizeof(snapshot->rainmaker.node_id));
     if (strcmp(cloud_status.last_error, "none") != 0) {
         strlcpy(cloud->last_error, cloud_status.last_error, sizeof(cloud->last_error));
     }
+#endif
+}
+
+esp_err_t extension_manager_start_rainmaker_mapping(char *user_id, char *secret_key)
+{
+#if LIGHTGW_HAS_RAINMAKER_EXTENSION
+    if (!user_id || !secret_key) return ESP_ERR_INVALID_ARG;
+    return rainmaker_extension_start_user_mapping(user_id, secret_key);
+#else
+    (void)user_id;
+    (void)secret_key;
+    return ESP_ERR_NOT_SUPPORTED;
 #endif
 }
 

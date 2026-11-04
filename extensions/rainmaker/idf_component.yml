@@ -1,0 +1,9 @@
+dependencies:
+  espressif/esp_rainmaker: "=1.17.0"
+  # 1.10.1 evaluates an IDF-6-only CMake version variable and drops the
+  # built-in MQTT dependency when used with the supported IDF 5.5.1 archive.
+  # 1.9.0 is the minimum supported by esp_rainmaker 1.17.0 and retains the
+  # correct IDF 5.x dependency declaration.
+  espressif/rmaker_common: "=1.9.0"
+  idf:
+    version: "=5.5.1"

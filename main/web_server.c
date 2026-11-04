@@ -645,6 +645,10 @@ static esp_err_t extensions_get(httpd_req_t *req)
     add_extension_module_json(modules, "bh1750", &snapshot.modules[EXTENSION_MODULE_BH1750]);
     add_extension_module_json(modules, "sht31", &snapshot.modules[EXTENSION_MODULE_SHT31]);
     add_extension_module_json(modules, "rainmaker", &snapshot.modules[EXTENSION_MODULE_RAINMAKER]);
+    cJSON *rainmaker = cJSON_AddObjectToObject(root, "rainmaker");
+    cJSON_AddBoolToObject(rainmaker, "claimed", snapshot.rainmaker.claimed);
+    cJSON_AddBoolToObject(rainmaker, "mapping_in_progress", snapshot.rainmaker.mapping_in_progress);
+    cJSON_AddStringToObject(rainmaker, "node_id", snapshot.rainmaker.node_id);
 
     cJSON *bh = cJSON_AddObjectToObject(root, "bh1750");
     cJSON_AddNumberToObject(bh, "lux", snapshot.bh1750.lux);
@@ -801,6 +805,38 @@ static esp_err_t sht31_config_post(httpd_req_t *req)
     if (err == ESP_ERR_NOT_SUPPORTED) return send_json_error(req, "409 Conflict", "SHT31 is not included");
     return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") :
                            send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+}
+
+static esp_err_t rainmaker_mapping_post(httpd_req_t *req)
+{
+    if (!backup_authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *user_id = json ? cJSON_GetObjectItem(json, "user_id") : NULL;
+    cJSON *secret = json ? cJSON_GetObjectItem(json, "secret_key") : NULL;
+    if (!cJSON_IsString(user_id) || !cJSON_IsString(secret) ||
+        strlen(user_id->valuestring) < 3 || strlen(user_id->valuestring) > 64 ||
+        strlen(secret->valuestring) < 8 || strlen(secret->valuestring) > 64) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "user_id/secret_key length is invalid");
+    }
+    char user_copy[65], secret_copy[65];
+    strlcpy(user_copy, user_id->valuestring, sizeof(user_copy));
+    strlcpy(secret_copy, secret->valuestring, sizeof(secret_copy));
+    memset(user_id->valuestring, 0, strlen(user_id->valuestring));
+    memset(secret->valuestring, 0, strlen(secret->valuestring));
+    cJSON_Delete(json);
+    esp_err_t err = extension_manager_start_rainmaker_mapping(user_copy, secret_copy);
+    memset(user_copy, 0, sizeof(user_copy));
+    memset(secret_copy, 0, sizeof(secret_copy));
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        return send_json_error(req, "409 Conflict", "RainMaker is not included in this firmware");
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "409 Conflict", "RainMaker must be enabled and MQTT online");
+    }
+    return err == ESP_OK ? httpd_resp_sendstr(req,
+        "{\"ok\":true,\"message\":\"Mapping request submitted; verify completion in status\"}") :
+        send_json_error(req, "502 Bad Gateway", esp_err_to_name(err));
 }
 
 #if LIGHTGW_HAS_ZIGBEE
@@ -1021,7 +1057,7 @@ static esp_err_t schedule_post(httpd_req_t *req)
 esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 30;
+    cfg.max_uri_handlers = 32;
     cfg.stack_size = 8192;
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
@@ -1041,6 +1077,7 @@ esp_err_t web_server_start(void)
         {.uri = "/api/extensions/bh1750/config", .method = HTTP_POST, .handler = bh1750_config_post},
         {.uri = "/api/extensions/bh1750/calibrate", .method = HTTP_POST, .handler = bh1750_calibrate_post},
         {.uri = "/api/extensions/sht31/config", .method = HTTP_POST, .handler = sht31_config_post},
+        {.uri = "/api/extensions/rainmaker/map", .method = HTTP_POST, .handler = rainmaker_mapping_post},
 #if LIGHTGW_HAS_ZIGBEE
         {.uri = "/api/pair", .method = HTTP_POST, .handler = pair_post},
 #endif

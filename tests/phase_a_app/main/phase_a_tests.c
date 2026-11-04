@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "rainmaker_control_policy.h"
 #include "scheduler_persistence.h"
 #include "sht31_protocol.h"
 #include "zigbee_state_cache.h"
@@ -365,6 +366,24 @@ static void test_sht31_crc_and_decode(void)
     CHECK(!sht31_protocol_decode(frame, &temperature, &humidity));
 }
 
+static void test_rainmaker_control_policy(void)
+{
+    bool on = true;
+    CHECK(rainmaker_control_policy_prepare(false, true, true, false, &on) ==
+          RAINMAKER_POLICY_IGNORE_INIT);
+    CHECK(rainmaker_control_policy_prepare(true, false, false, false, &on) ==
+          RAINMAKER_POLICY_IGNORE_RELEASE);
+    CHECK(rainmaker_control_policy_prepare(false, true, false, true, &on) ==
+          RAINMAKER_POLICY_REJECT_BUSY);
+    CHECK(rainmaker_control_policy_prepare(false, true, false, false, &on) ==
+          RAINMAKER_POLICY_SUBMIT && on);
+    CHECK(rainmaker_control_policy_prepare(false, false, false, false, &on) ==
+          RAINMAKER_POLICY_SUBMIT && !on);
+    on = true;
+    CHECK(rainmaker_control_policy_prepare(true, true, false, false, &on) ==
+          RAINMAKER_POLICY_SUBMIT && !on);
+}
+
 void app_main(void)
 {
     RUN(test_multi_device_isolation);
@@ -385,6 +404,7 @@ void app_main(void)
     RUN(test_backup_sha256_and_tamper_detection);
     RUN(test_bh1750_decode_validation_and_filter);
     RUN(test_sht31_crc_and_decode);
+    RUN(test_rainmaker_control_policy);
     printf("PHASE_A_C_TEST SUMMARY PASS: %u tests\n", s_passed);
     for (;;) vTaskDelay(portMAX_DELAY);
 }
