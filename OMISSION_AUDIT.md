@@ -16,7 +16,7 @@
 | RainMaker Classic | 固定 SDK 1.17.0，已实现 Node、self-claim、用户映射、MQTT 事件与重连所需 SDK 路径 | IMPLEMENTED / SOFTWARE TEST PASS / BUILD PASS / CLOUD NOT TESTED | `extensions/rainmaker/*`、组件依赖、Web 映射入口与测试 | 真实 Claiming/TLS/MQTT/App 控制日志；本地 Core 断云回归 |
 | Cloud Control ON/OFF | 三路灯 ON/OFF、全部 OFF、三种 IR OFF 均经统一 Device Control Service | IMPLEMENTED / SOFTWARE TEST PASS / BUILD PASS / HARDWARE NOT TESTED | `device_control.*`、RainMaker 适配、Zigbee 状态同步 | 新鲜 Zigbee 反馈同步；IR 只报已发送；真实设备/App 待测 |
 | 扩展配置备份 | v1 已包含启用状态、BH1750 配置/标定、SHT31 周期、RainMaker 非敏感偏好 | IMPLEMENTED / SOFTWARE TEST PASS / BUILD PASS / HARDWARE NOT TESTED | `backup_restore.*`、扩展配置版本/迁移测试 | 旧空占位兼容；扩展设置 round-trip；秘密排除；v1/v2 掉电回滚 |
-| FULL→CORE→FULL | 分区地址与回退流程已设计 | PARTIALLY IMPLEMENTED / NOT TESTED | 回归分区、`ROLLBACK.md`、硬件记录 | 核心数据保持；扩展数据保留；不得擦除；实物演练 |
+| FULL→CORE→FULL | 分区地址稳定、扩展缺失跳过且不擦除，具备数据保留模拟测试 | SOFTWARE TEST PASS / HARDWARE NOT TESTED | `test_variant_rollback.py`、`ROLLBACK.md`、硬件记录 | 实板核心/扩展数据保留、断电和失败回退演练 |
 | Heap/栈/Flash | 静态 size 与核心诊断已存在 | PARTIALLY IMPLEMENTED | 传感器/RainMaker事件监测和报告 | 启停、TLS、采样峰值；泄漏与长期趋势硬件测试 |
 | MODULE_MANAGEMENT.md | 已与运行时 API、NVS key 和限制同步 | IMPLEMENTED | 持续随接口更新 | 文档契约检查 |
 | Sensor/RainMaker 文档 | Sensor 两份及 RainMaker 设计/设置/测试计划已完成 | IMPLEMENTED | `SENSOR_WIRING.md`、`ENVIRONMENT_MONITORING.md`、`RAINMAKER_*.md` | 每项标明 IMPLEMENTED/BUILD/SOFTWARE/HARDWARE 状态 |

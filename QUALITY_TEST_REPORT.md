@@ -184,3 +184,11 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - 浏览器到真实 ESP32 的导出/导入、真实 Flash 写入中断电以及硬件回滚：NOT TESTED。
 
 本轮额外修复了禁用传感器配置导出：未启动采样任务时从 `sensor_nvs` 读取配置；读取失败会拒绝导出/事务快照，不再生成无效零值备份。
+
+## P5 安全回退软件验收（2026-11-04）
+
+- 四种变体共用 `partitions_stage5.csv`，核心及扩展分区顺序/地址不因变体改变：SOURCE TEST PASS。
+- 未编译扩展在应用备份时先跳过，不初始化、不打开、更不擦除其 NVS 分区：SOURCE TEST PASS。
+- FULL→CORE 保留 Wi-Fi/管理员、Zigbee、IR、运行状态、56 条任务、Sensor/Cloud 数据；CORE 更新核心配置后再切回 FULL，扩展数据重新可见：HOST SIMULATED PASS。
+- `ROLLBACK.md` 要求先备份完整 8 MiB 及关键分区，并明确禁止 `erase-flash`：DOCUMENT CONTRACT PASS。
+- 真实开发板 FULL→CORE→FULL、断电和失败回退：HARDWARE NOT TESTED；因此没有创建 stable Git Tag。

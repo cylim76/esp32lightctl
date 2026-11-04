@@ -13,6 +13,7 @@ if not defined IDF_PATH (
 python tests\static_storage_check.py || exit /b 1
 python tests\test_web_storage_contract.py || exit /b 1
 python tests\test_variant_contract.py || exit /b 1
+python tests\test_variant_rollback.py || exit /b 1
 python tests\test_backup_contract.py || exit /b 1
 python tests\test_backup_restore.py || exit /b 1
 python tests\test_ci_workflow.py || exit /b 1

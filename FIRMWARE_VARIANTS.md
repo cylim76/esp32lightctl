@@ -50,8 +50,8 @@ idf.py -B build-variant-CORE -D LIGHTGW_VARIANT=CORE build
 
 核心配置继续使用既有主 NVS、`ir_data`、`runtime_nvs` 和 Zigbee 分区。扩展保留独立命名空间/版本：
 
-- BH1750：`bh1750_ext`，版本 1，未来写入 `sensor_nvs`。
-- SHT31：`sht31_ext`，版本 1，未来写入 `sensor_nvs`。
+- BH1750：`bh1750_ext`，版本 1，配置已写入 `sensor_nvs`。
+- SHT31：`sht31_ext`，版本 1，配置已写入 `sensor_nvs`。
 - RainMaker：`rainmaker_ext`，版本 1；运行时启用状态写入 `cloud_nvs`。Claiming/账户绑定凭据由 RainMaker SDK 自身管理，配置备份不得导出。
 
 所有命名变体使用同一 `partitions_stage5.csv`。`sensor_nvs` 和 `cloud_nvs` 追加在所有既有分区之后，未移动 Wi-Fi、应用、Zigbee、coredump、红外或任务状态地址。刷入 `CORE` 不会擦除扩展分区，也不会清除核心数据。
