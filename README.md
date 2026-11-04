@@ -29,7 +29,7 @@
 - STA 地址由 DHCP 获取；联网后发布可配置的 `http://<设备名>.local` mDNS 地址，默认 `http://lightgw.local`。页面同时显示 IPv4、STA MAC 和 RSSI，mDNS 不可用时可继续使用当前 IPv4。
 - 管理员可从 Web 明确确认后进入安全重新配网：仅清除 Wi-Fi 凭据并重启到随机 WPA2 临时热点，保留原管理认证；配网完成即关闭热点。
 - 管理密码使用随机盐 + PBKDF2-HMAC-SHA256（120,000 次）保存；控制页面及 API 使用 HTTP Basic 访问控制。
-- 管理页支持版本化 JSON 配置备份/恢复：覆盖 56 条定时和两组 LG OFF 码，导入采用 SHA-256 校验、两阶段确认及 `runtime_nvs` 掉电回滚日志；不会导出密码、RainMaker 凭据、Zigbee 密钥/配对/端点映射。
+- 管理页支持版本化 JSON 配置备份/恢复：覆盖 56 条定时、两组 LG OFF 码及 BH1750/SHT31/RainMaker 非敏感扩展设置，导入采用 SHA-256 校验、两阶段确认及 `runtime_nvs` 掉电回滚日志；不会导出密码、RainMaker 凭据、Zigbee 密钥/配对/端点映射。
 - Coordinator 建网、180 秒允许入网、设备 announce、Active Endpoint/Simple Descriptor/model 发现。
 - Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
 - Web、调度器和后续云端入口统一经过 Device Control Service；每个命令拥有 ID，并区分 `PENDING`、`SENT`、`CONFIRMED`、`FAILED` 与实际状态 `UNKNOWN`。

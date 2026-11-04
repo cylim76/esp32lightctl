@@ -73,5 +73,6 @@
 | HW-438 | Sensor | BH1750/SHT31 独立启停、重启恢复与旧数据失效 | NOT TESTED | — | 记录 Heap、任务 HWM 和 NVS 写入计数 |
 | HW-439 | Sensor | DS3231+BH1750+SHT31 GPIO6/7 共享总线 | NOT TESTED | — | 检查上拉电压、地址、OSF 与并发恢复 |
 | HW-440 | Variants | CORE 页面显示扩展未包含且按钮禁用 | NOT TESTED | — | Core 控制必须继续正常 |
+| HW-441 | Backup | 禁用传感器时导出、FULL→CORE 导入跳过、回到 FULL 后设置仍保留 | NOT TESTED | — | 软件事务与兼容测试 PASS；真实 NVS/断电待测 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。

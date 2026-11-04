@@ -148,3 +148,14 @@ Stage 5 的 0.8.0 基线 BIN 为 1,483,408 B；0.9.0 复测为 1,493,872 B，均
 相对 0.11.0 占位云变体，RainMaker SDK/TLS/MQTT 使镜像明显增大；当前两个镜像仍能装入 3 MiB 应用分区并保留约 40%。这不等于运行时内存充足：TLS 首次握手、MQTT 重连、Zigbee 配对、红外学习、Web 请求和传感器并发时的 Free Heap/Largest Block/任务 HWM 尚未在 ESP32-C6 上测量，继续标为 NOT TESTED。
 
 备份候选不常驻静态 RAM：上传 body、cJSON、原生候选和回滚快照按需从堆分配；候选 2 分钟后自动释放。`runtime_nvs` 事务快照位于 Flash。导出/验证/提交已记录内存事件，但 48 KiB 最坏输入、并发 Wi-Fi/Zigbee/RMT 和堆碎片仍需 C6 实测，不能仅凭静态 DIRAM 断言余量充足。
+
+## P4 扩展配置备份后的资源结果（2026-11-04）
+
+| 变体 | BIN | Flash Code | 静态 DIRAM | DIRAM 剩余 | SHA-256 |
+|---|---:|---:|---:|---:|---|
+| CORE | 1,527,936 B | 1,388,090 B | 216,318 B | 235,794 B | `008196a4c9e5c644a780df370f0a37710becea1bd2391d3847accdb4c09486ca` |
+| CORE_SENSOR | 1,537,376 B | 1,397,032 B | 217,848 B | 234,264 B | `ee80dc07b06fad7f3539e6d1fcacb5e734da55ad187e896ed94f8f0d4e4a3606` |
+| CORE_CLOUD | 1,875,552 B | 1,734,570 B | 218,210 B | 233,902 B | `eb450887ad829e095c9f0ec7a6b9a1bca7d2717138d2b89a3adce339cfd2fd40` |
+| FULL | 1,885,024 B | 1,743,546 B | 219,740 B | 232,372 B | `b3f1a51bcbefaed4fccc6bc06dd5e76a7894abec98a9978c60b90ea5ee651f9a` |
+
+事务结构增加了扩展配置快照，但候选和回滚结构仍按请求临时分配，不成为静态 `.bss` 常驻对象。动态峰值、最大连续堆块以及导入时与 Zigbee/RMT/TLS 并发的余量仍需目标板测量，状态为 `NOT TESTED`。

@@ -9,7 +9,7 @@ Web 管理页可以下载一个带版本和 SHA-256 完整性校验的 JSON 文�
 - 左、中、右、全部照明以及 LG 空调 1/2/组的全部定时关闭任务，最多 56 条；
 - 固定时区 `CST-8`（Asia/Shanghai，UTC+8）；
 - Stage 5 的两组完整 IR OFF 码，包括原始时序结构、载波配置和内部 CRC；
-- BH1750、SHT31、RainMaker 的独立非敏感配置 schema。目前这些实验组件还没有用户可调参数，因此 v1 导出空的 `non_sensitive_settings` 对象，不会伪造或写入无效设置。
+- BH1750、SHT31、RainMaker 的独立非敏感配置 schema：启用状态、BH1750 采样/夜间阈值/五场景标定、SHT31 采样周期和 RainMaker 启用偏好。旧版 v1 空 `non_sensitive_settings` 仍可导入，并按“没有可恢复扩展设置”跳过，不覆盖目标板已有数据。
 
 以下数据明确不导出，也不会在导入时删除或覆盖：
 
@@ -82,11 +82,11 @@ SHA-256 用于检测损坏和意外修改，不是数字签名；能修改文件
 - IR 语义必须为 `explicit_off_only`；
 - 扩展配置版本必须是当前可识别版本，单个设置对象紧凑 JSON 不超过 1024 字节，并且不得声称包含凭据。
 
-CORE、CORE_SENSOR、CORE_CLOUD、FULL 使用同一 Core schema 和 Stage 5 分区布局，可以交换 v1 文件。目标固件未编入的扩展配置会跳过并报告，Core 配置仍可恢复。Stage 1～4 也能读取定时配置；没有 IR 的固件会验证但跳过 IR 部分，之后应在 Stage 5/CORE 上重新导入以恢复红外码。
+CORE、CORE_SENSOR、CORE_CLOUD、FULL 使用同一 Core schema 和 Stage 5 分区布局，可以交换 v1 文件。目标固件未编入的扩展配置会跳过并报告，且不会清除对应 `sensor_nvs`/`cloud_nvs` 数据；Core 配置仍可恢复。再次切回包含扩展的固件时，原扩展数据仍可用。Stage 1～4 也能读取定时配置；没有 IR 的固件会验证但跳过 IR 部分，之后应在 Stage 5/CORE 上重新导入以恢复红外码。
 
 ## 事务、断电与失败恢复
 
-提交前，固件把将被修改的旧定时/时区/IR 数据写入 `runtime_nvs` 的 `backup_tx/rollback` 日志并提交。之后才按顺序写 Core NVS 和 `ir_data`。全部成功后才清除事务日志。
+提交前，固件把将被修改的旧定时/时区/IR/扩展非敏感配置写入 `runtime_nvs` 的 `backup_tx/rollback` 日志并提交。之后才按顺序写 Core NVS、`ir_data`、`sensor_nvs`/`cloud_nvs`。全部成功后才清除事务日志。事务记录升级为 v2，同时保留读取旧 v1 Core/IR 回滚记录的兼容路径。
 
 - 解析、范围或校验失败：没有任何配置写入；
 - 某次 NVS 写入失败：立即尝试恢复导入前快照；

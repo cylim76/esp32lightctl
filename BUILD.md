@@ -184,3 +184,16 @@ ESP32-C6 C 测试镜像同时真实构建通过；最终大小和 SHA-256 见 [Q
 | FULL | PASS (BUILD ONLY) | 1,512,896 B | 1,373,048 B | 215,942 B | `496a4c31e30e8937c74188856e98085b64b74f291d079c66aa60ee45f7d4d21c` |
 
 ESP32-C6 C 测试镜像为 126,992 B，SHA-256 `e50367269418bd87140b57a407e1ada78e0f43ec8a51f8ba178d4bb4d1d5d451`。同一生产 C 测试源在 ESP32-C3 QEMU 中实际运行 16/16 PASS，包括新增 SHA-256 已知向量和篡改拒绝；这是软件模拟结果，不是 ESP32-C6 硬件通过。
+
+## P4 扩展配置备份增量构建（2026-11-04）
+
+扩展配置加入同一导入事务后，使用 ESP-IDF 5.5.1 在四个独立目录顺序执行真实 `idf.py build`；随后以 `idf_size.py --format json2` 读取链接映射。不同变体不要在同一工作树内并行首次构建，因为 ESP-IDF Component Manager 会共同更新 `managed_components` 和 `dependencies.lock`；CI Job 使用隔离工作区，不受此限制。
+
+| 变体 | 结果 | 应用 `.bin` | Flash Code | 静态 DIRAM | SHA-256 |
+|---|---|---:|---:|---:|---|
+| CORE | BUILD PASS | 1,527,936 B | 1,388,090 B | 216,318 B | `008196a4c9e5c644a780df370f0a37710becea1bd2391d3847accdb4c09486ca` |
+| CORE_SENSOR | BUILD PASS | 1,537,376 B | 1,397,032 B | 217,848 B | `ee80dc07b06fad7f3539e6d1fcacb5e734da55ad187e896ed94f8f0d4e4a3606` |
+| CORE_CLOUD | BUILD PASS | 1,875,552 B | 1,734,570 B | 218,210 B | `eb450887ad829e095c9f0ec7a6b9a1bca7d2717138d2b89a3adce339cfd2fd40` |
+| FULL | BUILD PASS | 1,885,024 B | 1,743,546 B | 219,740 B | `b3f1a51bcbefaed4fccc6bc06dd5e76a7894abec98a9978c60b90ea5ee651f9a` |
+
+本轮同时验证了已禁用传感器的配置读取路径：模块没有创建采样任务时，导出仍从 `sensor_nvs` 读取有效配置，不使用未初始化 RAM。以上均为本机构建结果，不代表配置导入断电、传感器或 RainMaker 硬件通过。

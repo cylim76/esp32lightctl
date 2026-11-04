@@ -19,6 +19,8 @@ for key in ("bh_enabled", "sht_enabled", "rm_enabled"):
     assert key in manager
 assert "if (!module_included(module)) return ESP_ERR_NOT_SUPPORTED" in manager
 assert "if (unchanged) return ESP_OK" in manager
+assert "bh1750_extension_read_config(&current)" in manager
+assert "sht31_extension_read_config(&current)" in manager
 
 # Authenticated management and status routes exist in every variant so CORE
 # can truthfully report that an extension is not compiled in.

@@ -1,6 +1,7 @@
 #include "backup_restore.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@
 #include "esp_crc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "extension_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "mbedtls/base64.h"
@@ -28,7 +30,7 @@
 
 #define BACKUP_CORE_SCHEMA_VERSION 3
 #define BACKUP_TRANSACTION_MAGIC   0x42545831UL
-#define BACKUP_TRANSACTION_VERSION 1
+#define BACKUP_TRANSACTION_VERSION 2
 #define BACKUP_TRANSACTION_NAMESPACE "backup_tx"
 #define BACKUP_TRANSACTION_KEY       "rollback"
 #define BACKUP_STAGE_TTL_US (120LL * 1000000LL)
@@ -40,7 +42,25 @@ typedef struct {
     uint8_t ir_available;
     uint8_t ir_present[IR_CODE_SLOT_COUNT];
     ir_code_t ir_codes[IR_CODE_SLOT_COUNT];
+} backup_native_payload_v1_t;
+
+typedef struct {
+    uint8_t schedule_count;
+    app_schedule_entry_t schedules[APP_MAX_SCHEDULES];
+    char timezone[65];
+    uint8_t ir_available;
+    uint8_t ir_present[IR_CODE_SLOT_COUNT];
+    ir_code_t ir_codes[IR_CODE_SLOT_COUNT];
+    extension_backup_config_t extensions;
 } backup_native_payload_t;
+
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t reserved;
+    backup_native_payload_v1_t previous;
+    uint32_t checksum;
+} backup_transaction_v1_t;
 
 typedef struct {
     uint32_t magic;
@@ -140,7 +160,7 @@ static esp_err_t snapshot_current(backup_native_payload_t *snapshot)
         }
     }
 #endif
-    return ESP_OK;
+    return extension_manager_get_backup_config(&snapshot->extensions);
 }
 
 static esp_err_t write_primary_snapshot_raw(const backup_native_payload_t *snapshot)
@@ -196,6 +216,13 @@ static esp_err_t restore_snapshot_raw(const backup_native_payload_t *snapshot)
         strcmp(snapshot->timezone, APP_TIMEZONE_DEFAULT) != 0) return ESP_ERR_INVALID_STATE;
     esp_err_t err = write_primary_snapshot_raw(snapshot);
     if (err == ESP_OK) err = write_ir_snapshot_raw(snapshot);
+    if (err == ESP_OK && snapshot->extensions.present_mask) {
+        size_t applied = 0;
+        size_t skipped = 0;
+        bool restart_required = false;
+        err = extension_manager_apply_backup_config(&snapshot->extensions, &applied, &skipped,
+                                                    &restart_required);
+    }
     return err;
 }
 
@@ -246,25 +273,42 @@ esp_err_t backup_restore_recover_pending(void)
                                              NVS_READONLY, &nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
     if (err != ESP_OK) return err;
-    backup_transaction_t *record = calloc(1, sizeof(*record));
-    if (!record) { nvs_close(nvs); return ESP_ERR_NO_MEM; }
-    size_t length = sizeof(*record);
-    err = nvs_get_blob(nvs, BACKUP_TRANSACTION_KEY, record, &length);
+    uint8_t *raw = calloc(1, sizeof(backup_transaction_t));
+    if (!raw) { nvs_close(nvs); return ESP_ERR_NO_MEM; }
+    size_t length = sizeof(backup_transaction_t);
+    err = nvs_get_blob(nvs, BACKUP_TRANSACTION_KEY, raw, &length);
     nvs_close(nvs);
-    if (err == ESP_ERR_NVS_NOT_FOUND) { free(record); return ESP_OK; }
-    bool valid = err == ESP_OK && length == sizeof(*record) &&
-                 record->magic == BACKUP_TRANSACTION_MAGIC &&
-                 record->version == BACKUP_TRANSACTION_VERSION &&
-                 record->checksum == bytes_checksum(record, offsetof(backup_transaction_t, checksum));
+    if (err == ESP_ERR_NVS_NOT_FOUND) { free(raw); return ESP_OK; }
+    backup_native_payload_t previous = {0};
+    bool valid = false;
+    if (err == ESP_OK && length == sizeof(backup_transaction_t)) {
+        const backup_transaction_t *record = (const backup_transaction_t *)raw;
+        valid = record->magic == BACKUP_TRANSACTION_MAGIC &&
+                record->version == BACKUP_TRANSACTION_VERSION &&
+                record->checksum == bytes_checksum(record, offsetof(backup_transaction_t, checksum));
+        if (valid) previous = record->previous;
+    } else if (err == ESP_OK && length == sizeof(backup_transaction_v1_t)) {
+        const backup_transaction_v1_t *record = (const backup_transaction_v1_t *)raw;
+        valid = record->magic == BACKUP_TRANSACTION_MAGIC && record->version == 1 &&
+                record->checksum == bytes_checksum(record, offsetof(backup_transaction_v1_t, checksum));
+        if (valid) {
+            previous.schedule_count = record->previous.schedule_count;
+            memcpy(previous.schedules, record->previous.schedules, sizeof(previous.schedules));
+            strlcpy(previous.timezone, record->previous.timezone, sizeof(previous.timezone));
+            previous.ir_available = record->previous.ir_available;
+            memcpy(previous.ir_present, record->previous.ir_present, sizeof(previous.ir_present));
+            memcpy(previous.ir_codes, record->previous.ir_codes, sizeof(previous.ir_codes));
+        }
+    }
     if (!valid) {
-        free(record);
+        free(raw);
         storage_manager_record_corruption(APP_RUNTIME_STORAGE_PARTITION,
                                           "backup rollback journal invalid; retained for diagnosis");
         return ESP_ERR_INVALID_CRC;
     }
     ESP_LOGW(TAG, "Interrupted configuration import detected; restoring pre-import snapshot");
-    err = restore_snapshot_raw(&record->previous);
-    free(record);
+    err = restore_snapshot_raw(&previous);
+    free(raw);
     if (err == ESP_OK) err = journal_clear();
     if (err == ESP_OK) diagnostics_set_error(TAG, "Interrupted import rolled back; original configuration restored");
     return err;
@@ -328,13 +372,14 @@ static esp_err_t add_ir_export(cJSON *payload)
     return ESP_OK;
 }
 
-static void add_extension(cJSON *extensions, const char *name, bool included, int version)
+static cJSON *add_extension(cJSON *extensions, const char *name, bool included, int version)
 {
     cJSON *item = cJSON_AddObjectToObject(extensions, name);
     cJSON_AddBoolToObject(item, "included_in_source_firmware", included);
     cJSON_AddNumberToObject(item, "config_version", version);
-    cJSON_AddObjectToObject(item, "non_sensitive_settings");
+    cJSON *settings = cJSON_AddObjectToObject(item, "non_sensitive_settings");
     cJSON_AddFalseToObject(item, "credentials_included");
+    return settings;
 }
 
 esp_err_t backup_restore_export_json(char **json_out, size_t *length_out,
@@ -384,9 +429,38 @@ esp_err_t backup_restore_export_json(char **json_out, size_t *length_out,
     }
     esp_err_t err = add_ir_export(payload);
     cJSON *extensions = cJSON_AddObjectToObject(payload, "extensions");
-    add_extension(extensions, "bh1750", LIGHTGW_HAS_BH1750_EXTENSION, 1);
-    add_extension(extensions, "sht31", LIGHTGW_HAS_SHT31_EXTENSION, 1);
-    add_extension(extensions, "rainmaker", LIGHTGW_HAS_RAINMAKER_EXTENSION, 1);
+    extension_backup_config_t extension_config;
+    esp_err_t extension_err = extension_manager_get_backup_config(&extension_config);
+    if (extension_err != ESP_OK) {
+        cJSON_Delete(root);
+        return extension_err;
+    }
+    cJSON *bh = add_extension(extensions, "bh1750", LIGHTGW_HAS_BH1750_EXTENSION, 1);
+    if (LIGHTGW_HAS_BH1750_EXTENSION) {
+        cJSON_AddBoolToObject(bh, "enabled", (extension_config.enabled_mask &
+                              (1U << EXTENSION_MODULE_BH1750)) != 0);
+        cJSON_AddNumberToObject(bh, "sample_period_seconds", extension_config.bh1750_sample_period_seconds);
+        cJSON_AddNumberToObject(bh, "night_start_minute", extension_config.bh1750_night_start_minute);
+        cJSON_AddNumberToObject(bh, "night_end_minute", extension_config.bh1750_night_end_minute);
+        cJSON_AddNumberToObject(bh, "night_lux_threshold", extension_config.bh1750_night_lux_threshold);
+        cJSON_AddNumberToObject(bh, "consecutive_anomaly_limit", extension_config.bh1750_consecutive_anomaly_limit);
+        cJSON_AddNumberToObject(bh, "calibration_valid_mask", extension_config.bh1750_calibration_valid_mask);
+        cJSON *calibration = cJSON_AddArrayToObject(bh, "calibration_lux");
+        for (size_t i = 0; i < 5; ++i) {
+            cJSON_AddItemToArray(calibration, cJSON_CreateNumber(extension_config.bh1750_calibration_lux[i]));
+        }
+    }
+    cJSON *sht = add_extension(extensions, "sht31", LIGHTGW_HAS_SHT31_EXTENSION, 1);
+    if (LIGHTGW_HAS_SHT31_EXTENSION) {
+        cJSON_AddBoolToObject(sht, "enabled", (extension_config.enabled_mask &
+                              (1U << EXTENSION_MODULE_SHT31)) != 0);
+        cJSON_AddNumberToObject(sht, "sample_period_seconds", extension_config.sht31_sample_period_seconds);
+    }
+    cJSON *rainmaker = add_extension(extensions, "rainmaker", LIGHTGW_HAS_RAINMAKER_EXTENSION, 1);
+    if (LIGHTGW_HAS_RAINMAKER_EXTENSION) {
+        cJSON_AddBoolToObject(rainmaker, "enabled", (extension_config.enabled_mask &
+                              (1U << EXTENSION_MODULE_RAINMAKER)) != 0);
+    }
     cJSON *excluded = cJSON_AddArrayToObject(payload, "excluded_sensitive_or_identity_data");
     const char *excluded_names[] = {"wifi_password", "admin_password", "rainmaker_credentials",
                                     "zigbee_network_keys", "zigbee_pairing_data", "zigbee_device_mappings"};
@@ -455,24 +529,83 @@ static bool parse_schedule(const cJSON *item, app_schedule_entry_t *entry)
     return true;
 }
 
-static bool validate_extension_sections(const cJSON *extensions, size_t *section_count)
+static bool target_includes_extension(extension_module_id_t module)
 {
-    if (!cJSON_IsObject(extensions)) return false;
+    switch (module) {
+    case EXTENSION_MODULE_BH1750: return LIGHTGW_HAS_BH1750_EXTENSION;
+    case EXTENSION_MODULE_SHT31: return LIGHTGW_HAS_SHT31_EXTENSION;
+    case EXTENSION_MODULE_RAINMAKER: return LIGHTGW_HAS_RAINMAKER_EXTENSION;
+    default: return false;
+    }
+}
+
+static bool parse_extension_sections(const cJSON *extensions,
+                                     extension_backup_config_t *config,
+                                     size_t *section_count, size_t *skipped_count)
+{
+    if (!cJSON_IsObject(extensions) || !config || !section_count || !skipped_count) return false;
     const char *names[] = {"bh1750", "sht31", "rainmaker"};
+    memset(config, 0, sizeof(*config));
     *section_count = 0;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         cJSON *item = cJSON_GetObjectItem(extensions, names[i]);
         if (!item) continue;
+        cJSON *included = cJSON_GetObjectItem(item, "included_in_source_firmware");
         cJSON *version = cJSON_GetObjectItem(item, "config_version");
         cJSON *settings = cJSON_GetObjectItem(item, "non_sensitive_settings");
         cJSON *credentials = cJSON_GetObjectItem(item, "credentials_included");
-        if (!cJSON_IsObject(item) || !integer_in_range(version, 1, 1) ||
+        if (!cJSON_IsObject(item) || !cJSON_IsBool(included) ||
+            !integer_in_range(version, 1, 1) ||
             !cJSON_IsObject(settings) || !cJSON_IsFalse(credentials)) return false;
         char *bounded = cJSON_PrintUnformatted(settings);
         bool valid = bounded && strlen(bounded) <= 1024;
         free(bounded);
         if (!valid) return false;
         (*section_count)++;
+        if (!cJSON_IsTrue(included)) continue;
+        /* Backward compatibility: original v1 files exported empty extension
+         * placeholders. They remain valid and never overwrite target data. */
+        if (cJSON_GetArraySize(settings) == 0) {
+            (*skipped_count)++;
+            continue;
+        }
+        cJSON *enabled = cJSON_GetObjectItem(settings, "enabled");
+        if (!cJSON_IsBool(enabled)) return false;
+        extension_module_id_t module = (extension_module_id_t)i;
+        config->present_mask |= 1U << module;
+        if (cJSON_IsTrue(enabled)) config->enabled_mask |= 1U << module;
+        if (module == EXTENSION_MODULE_BH1750) {
+            cJSON *sample = cJSON_GetObjectItem(settings, "sample_period_seconds");
+            cJSON *night_start = cJSON_GetObjectItem(settings, "night_start_minute");
+            cJSON *night_end = cJSON_GetObjectItem(settings, "night_end_minute");
+            cJSON *threshold = cJSON_GetObjectItem(settings, "night_lux_threshold");
+            cJSON *consecutive = cJSON_GetObjectItem(settings, "consecutive_anomaly_limit");
+            cJSON *mask = cJSON_GetObjectItem(settings, "calibration_valid_mask");
+            cJSON *calibration = cJSON_GetObjectItem(settings, "calibration_lux");
+            if (!integer_in_range(sample, 10, 300) || !integer_in_range(night_start, 0, 1439) ||
+                !integer_in_range(night_end, 0, 1439) || !cJSON_IsNumber(threshold) ||
+                !isfinite(threshold->valuedouble) || threshold->valuedouble < 0.0 ||
+                threshold->valuedouble > 10000.0 || !integer_in_range(consecutive, 1, 20) ||
+                !integer_in_range(mask, 0, 0x1F) || !cJSON_IsArray(calibration) ||
+                cJSON_GetArraySize(calibration) != 5) return false;
+            config->bh1750_sample_period_seconds = sample->valueint;
+            config->bh1750_night_start_minute = night_start->valueint;
+            config->bh1750_night_end_minute = night_end->valueint;
+            config->bh1750_night_lux_threshold = threshold->valuedouble;
+            config->bh1750_consecutive_anomaly_limit = consecutive->valueint;
+            config->bh1750_calibration_valid_mask = mask->valueint;
+            for (size_t calibration_index = 0; calibration_index < 5; ++calibration_index) {
+                cJSON *value = cJSON_GetArrayItem(calibration, calibration_index);
+                if (!cJSON_IsNumber(value) || !isfinite(value->valuedouble) ||
+                    value->valuedouble < 0.0 || value->valuedouble > 100000.0) return false;
+                config->bh1750_calibration_lux[calibration_index] = value->valuedouble;
+            }
+        } else if (module == EXTENSION_MODULE_SHT31) {
+            cJSON *sample = cJSON_GetObjectItem(settings, "sample_period_seconds");
+            if (!integer_in_range(sample, 30, 60)) return false;
+            config->sht31_sample_period_seconds = sample->valueint;
+        }
+        if (!target_includes_extension(module)) (*skipped_count)++;
     }
     return true;
 }
@@ -599,11 +732,14 @@ esp_err_t backup_restore_validate_import(const char *json, size_t length,
     }
     if (err == ESP_OK) {
         cJSON *extensions = cJSON_GetObjectItem(payload_json, "extensions");
-        if (!validate_extension_sections(extensions, &parsed.extension_sections)) err = ESP_ERR_NOT_SUPPORTED;
-        /* Current experimental modules expose no user-tunable values yet. Empty
-           schema objects are checked and preserved by the format, but no fake
-           NVS settings are written. */
         parsed.skipped_sections = 1; /* Zigbee pairing/network/mapping. */
+        if (!parse_extension_sections(extensions, &candidate->extensions,
+                                      &parsed.extension_sections,
+                                      &parsed.skipped_sections)) err = ESP_ERR_NOT_SUPPORTED;
+        for (extension_module_id_t module = 0; module < EXTENSION_MODULE_COUNT; ++module) {
+            if ((candidate->extensions.present_mask & (1U << module)) &&
+                target_includes_extension(module)) parsed.restored_extensions++;
+        }
 #if !LIGHTGW_HAS_IR
         if (candidate->ir_available) parsed.skipped_sections++;
 #endif
@@ -619,8 +755,9 @@ esp_err_t backup_restore_validate_import(const char *json, size_t length,
             stage->summary = parsed;
             strlcpy(stage->summary.token, digest->valuestring, sizeof(stage->summary.token));
             snprintf(stage->summary.message, sizeof(stage->summary.message),
-                     "validated: %u schedules, %u IR OFF codes; Zigbee re-pair required",
-                     (unsigned)parsed.schedules, (unsigned)parsed.ir_codes);
+                     "validated: %u schedules, %u IR OFF codes, %u extension setting section(s); Zigbee re-pair required",
+                     (unsigned)parsed.schedules, (unsigned)parsed.ir_codes,
+                     (unsigned)parsed.restored_extensions);
         }
         if (err == ESP_OK) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -662,6 +799,13 @@ static esp_err_t apply_import(const backup_native_payload_t *payload)
         }
     }
 #endif
+    if (err == ESP_OK && payload->extensions.present_mask) {
+        size_t applied = 0;
+        size_t skipped = 0;
+        bool restart_required = false;
+        err = extension_manager_apply_backup_config(&payload->extensions, &applied, &skipped,
+                                                    &restart_required);
+    }
     return err;
 }
 
@@ -724,13 +868,14 @@ esp_err_t backup_restore_commit_import(const char *token,
     }
     diagnostics_record_memory_event("backup_import_commit_end");
     snprintf(staged_summary.message, sizeof(staged_summary.message),
-             "restored %u schedules and %u IR OFF codes; skipped %u section(s); re-pair Zigbee devices",
+             "restored %u schedules, %u IR OFF codes and %u extension section(s); skipped %u section(s); re-pair Zigbee devices",
              (unsigned)staged_summary.schedules,
 #if LIGHTGW_HAS_IR
              (unsigned)staged_summary.ir_codes,
 #else
              0U,
 #endif
+             (unsigned)staged_summary.restored_extensions,
              (unsigned)staged_summary.skipped_sections);
     *summary = staged_summary;
     free(candidate);

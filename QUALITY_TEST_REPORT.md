@@ -155,7 +155,7 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - QEMU：18/18 PASS；ESP32-C6 测试镜像 BUILD PASS。
 - `CORE_SENSOR` 真实 `idf.py build`：PASS。
 - 真实 BH1750/SHT31、共享 I²C、运行时反复启停、长期 Heap 与数值精度：NOT TESTED。
-- 扩展设置尚未加入 JSON 备份；P4 前保持 PARTIALLY IMPLEMENTED，不把空占位对象描述为完成。
+- 本节记录的是 P1/P2 当时状态；扩展设置备份已在后续 P4 完成，最终结论见下方 P4 结果。
 
 ## P3 RainMaker Classic 软件结果（2026-11-04）
 
@@ -168,3 +168,19 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - RainMaker 停用不会尝试不安全的热销毁；配置先持久化，API 明确返回 `restart_required`。受控重启行为仍需目标板验证。
 
 本功能没有破坏性数据迁移，不会擦除任何整个分区。SHA-256 是完整性检查而非数字签名；HTTP Basic 无 TLS，只能在可信本地网络或安全通道使用。
+
+## P4 扩展配置备份与事务恢复结果（2026-11-04）
+
+- BH1750 启用状态、采样周期、夜间时段、Lux 阈值、连续异常次数和五场景标定值：IMPLEMENTED / SOFTWARE TEST PASS。
+- SHT31 启用状态与采样周期：IMPLEMENTED / SOFTWARE TEST PASS。
+- RainMaker 非敏感启用偏好：IMPLEMENTED / SOFTWARE TEST PASS；Claiming 凭据、证书和密钥继续排除。
+- 旧版空 `non_sensitive_settings`：兼容导入并跳过，不覆盖现有扩展设置。
+- 未编译扩展：导入时跳过并报告，保留独立 NVS，支持 FULL→CORE→FULL。
+- 扩展设置与 56 条任务、两组 IR 码共同进入验证、确认、提交和回滚事务；旧版事务日志可恢复。
+- 正常导入、尾随 JSON、结构错误、版本不兼容、校验失败、超大文件、模拟断电回滚、重复导入、新板恢复、旧空占位、扩展范围错误：HOST SOFTWARE TEST PASS。
+- CORE、CORE_SENSOR、CORE_CLOUD、FULL 增量 `idf.py build`：BUILD PASS；大小和 SHA-256 见 `BUILD.md`。
+- 完整 `check-all.bat`：PASS；Stage 1～5 与四种固件均完成 `build`、`size`、`size-components`，并通过 ESP32-C6 C 测试镜像构建、Web JavaScript、存储/变体/扩展/RainMaker/备份契约和调度模拟。
+- 本轮 ESP32-C6 C 测试镜像：BUILD PASS，129,936 B，SHA-256 `e116b28abf2a54619288b057d4566e35f57435b0e873405ed51b7c0aa699f608`；尚未在 C6 实板运行。
+- 浏览器到真实 ESP32 的导出/导入、真实 Flash 写入中断电以及硬件回滚：NOT TESTED。
+
+本轮额外修复了禁用传感器配置导出：未启动采样任务时从 `sensor_nvs` 读取配置；读取失败会拒绝导出/事务快照，不再生成无效零值备份。

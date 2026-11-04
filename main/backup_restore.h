@@ -12,6 +12,7 @@ typedef struct {
     size_t schedules;
     size_t ir_codes;
     size_t extension_sections;
+    size_t restored_extensions;
     size_t skipped_sections;
     bool ir_section_available;
     bool requires_zigbee_repair;

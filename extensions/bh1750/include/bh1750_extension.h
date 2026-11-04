@@ -56,5 +56,6 @@ esp_err_t bh1750_extension_start(void);
 esp_err_t bh1750_extension_stop(void);
 void bh1750_extension_get_status(bh1750_extension_status_t *status);
 void bh1750_extension_get_config(bh1750_extension_config_t *config);
+esp_err_t bh1750_extension_read_config(bh1750_extension_config_t *config);
 esp_err_t bh1750_extension_set_config(const bh1750_extension_config_t *config);
 esp_err_t bh1750_extension_record_calibration(bh1750_calibration_scene_t scene);

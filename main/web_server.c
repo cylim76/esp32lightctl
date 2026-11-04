@@ -154,6 +154,7 @@ static esp_err_t send_backup_summary(httpd_req_t *req, const backup_import_summa
     cJSON_AddNumberToObject(root, "schedules", summary->schedules);
     cJSON_AddNumberToObject(root, "ir_codes", summary->ir_codes);
     cJSON_AddNumberToObject(root, "extension_sections", summary->extension_sections);
+    cJSON_AddNumberToObject(root, "restored_extensions", summary->restored_extensions);
     cJSON_AddNumberToObject(root, "skipped_sections", summary->skipped_sections);
     cJSON_AddBoolToObject(root, "ir_section_available", summary->ir_section_available);
     cJSON_AddBoolToObject(root, "requires_zigbee_repair", summary->requires_zigbee_repair);

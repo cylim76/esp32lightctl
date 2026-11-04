@@ -48,4 +48,5 @@ esp_err_t sht31_extension_start(void);
 esp_err_t sht31_extension_stop(void);
 void sht31_extension_get_status(sht31_extension_status_t *status);
 void sht31_extension_get_config(sht31_extension_config_t *config);
+esp_err_t sht31_extension_read_config(sht31_extension_config_t *config);
 esp_err_t sht31_extension_set_config(const sht31_extension_config_t *config);

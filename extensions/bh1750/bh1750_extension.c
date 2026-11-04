@@ -71,9 +71,10 @@ static void set_error(esp_err_t err, const char *operation)
     portEXIT_CRITICAL(&s_lock);
 }
 
-static esp_err_t load_config(void)
+static esp_err_t load_config(bh1750_extension_config_t *config)
 {
-    default_config(&s_config);
+    if (!config) return ESP_ERR_INVALID_ARG;
+    default_config(config);
     esp_err_t err = nvs_flash_init_partition(BH1750_STORAGE_PARTITION);
     if (err != ESP_OK) return err;
     nvs_handle_t nvs;
@@ -92,7 +93,7 @@ static esp_err_t load_config(void)
         ESP_LOGE(TAG, "Stored config invalid; safe defaults used without erasing NVS");
         return ESP_ERR_INVALID_CRC;
     }
-    s_config = stored;
+    *config = stored;
     return ESP_OK;
 }
 
@@ -272,12 +273,14 @@ esp_err_t bh1750_extension_start(void)
     bool running = s_status.running;
     portEXIT_CRITICAL(&s_lock);
     if (running) return ESP_OK;
-    esp_err_t config_err = load_config();
+    bh1750_extension_config_t config;
+    esp_err_t config_err = load_config(&config);
     if (config_err != ESP_OK && config_err != ESP_ERR_INVALID_CRC) {
         set_error(config_err, "config load");
         return config_err;
     }
     portENTER_CRITICAL(&s_lock);
+    s_config = config;
     memset(&s_status, 0, sizeof(s_status));
     strlcpy(s_status.last_error, config_err == ESP_OK ? "none" : "invalid config; safe defaults",
             sizeof(s_status.last_error));
@@ -337,6 +340,17 @@ void bh1750_extension_get_config(bh1750_extension_config_t *config)
     portENTER_CRITICAL(&s_lock);
     *config = s_config;
     portEXIT_CRITICAL(&s_lock);
+}
+
+esp_err_t bh1750_extension_read_config(bh1750_extension_config_t *config)
+{
+    if (!config) return ESP_ERR_INVALID_ARG;
+    portENTER_CRITICAL(&s_lock);
+    bool loaded = config_valid(&s_config);
+    if (loaded) *config = s_config;
+    portEXIT_CRITICAL(&s_lock);
+    if (loaded) return ESP_OK;
+    return load_config(config);
 }
 
 esp_err_t bh1750_extension_set_config(const bh1750_extension_config_t *config)

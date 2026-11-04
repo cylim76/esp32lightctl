@@ -104,9 +104,11 @@ static esp_err_t load_enabled(extension_module_id_t module, bool *enabled)
 static esp_err_t persist_enabled(extension_module_id_t module, bool enabled)
 {
     const char *partition = module_partition(module);
+    esp_err_t err = storage_manager_init_optional_partition(partition);
+    if (err != ESP_OK) return err;
     nvs_handle_t nvs = 0;
-    esp_err_t err = nvs_open_from_partition(partition, EXTENSION_MANAGER_NAMESPACE,
-                                             NVS_READWRITE, &nvs);
+    err = nvs_open_from_partition(partition, EXTENSION_MANAGER_NAMESPACE,
+                                  NVS_READWRITE, &nvs);
     if (err == ESP_OK) err = nvs_set_u8(nvs, "version", EXTENSION_MANAGER_VERSION);
     if (err == ESP_OK) err = nvs_set_u8(nvs, module_key(module), enabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_commit(nvs);
@@ -408,7 +410,8 @@ esp_err_t extension_manager_set_bh1750_config(const extension_bh1750_view_t *con
 #if LIGHTGW_HAS_BH1750_EXTENSION
     if (!config) return ESP_ERR_INVALID_ARG;
     bh1750_extension_config_t current;
-    bh1750_extension_get_config(&current);
+    esp_err_t err = bh1750_extension_read_config(&current);
+    if (err != ESP_OK) return err;
     current.sample_period_seconds = config->sample_period_seconds;
     current.night_start_minute = config->night_start_minute;
     current.night_end_minute = config->night_end_minute;
@@ -435,11 +438,105 @@ esp_err_t extension_manager_set_sht31_config(uint16_t sample_period_seconds)
 {
 #if LIGHTGW_HAS_SHT31_EXTENSION
     sht31_extension_config_t current;
-    sht31_extension_get_config(&current);
+    esp_err_t err = sht31_extension_read_config(&current);
+    if (err != ESP_OK) return err;
     current.sample_period_seconds = sample_period_seconds;
     return sht31_extension_set_config(&current);
 #else
     (void)sample_period_seconds;
     return ESP_ERR_NOT_SUPPORTED;
 #endif
+}
+
+esp_err_t extension_manager_get_backup_config(extension_backup_config_t *config)
+{
+    if (!config) return ESP_ERR_INVALID_ARG;
+    memset(config, 0, sizeof(*config));
+    extension_manager_snapshot_t snapshot;
+    extension_manager_get_snapshot(&snapshot);
+    for (extension_module_id_t module = 0; module < EXTENSION_MODULE_COUNT; ++module) {
+        if (!snapshot.modules[module].included) continue;
+        config->present_mask |= 1U << module;
+        if (snapshot.modules[module].enabled) config->enabled_mask |= 1U << module;
+    }
+#if LIGHTGW_HAS_BH1750_EXTENSION
+    bh1750_extension_config_t bh_config;
+    esp_err_t bh_err = bh1750_extension_read_config(&bh_config);
+    if (bh_err != ESP_OK) return bh_err;
+    config->bh1750_sample_period_seconds = bh_config.sample_period_seconds;
+    config->bh1750_night_start_minute = bh_config.night_start_minute;
+    config->bh1750_night_end_minute = bh_config.night_end_minute;
+    config->bh1750_night_lux_threshold = bh_config.night_lux_threshold;
+    config->bh1750_consecutive_anomaly_limit = bh_config.consecutive_anomaly_limit;
+    config->bh1750_calibration_valid_mask = bh_config.calibration_valid_mask;
+    memcpy(config->bh1750_calibration_lux, bh_config.calibration_lux,
+           sizeof(config->bh1750_calibration_lux));
+#endif
+#if LIGHTGW_HAS_SHT31_EXTENSION
+    sht31_extension_config_t sht_config;
+    esp_err_t sht_err = sht31_extension_read_config(&sht_config);
+    if (sht_err != ESP_OK) return sht_err;
+    config->sht31_sample_period_seconds = sht_config.sample_period_seconds;
+#endif
+    return ESP_OK;
+}
+
+esp_err_t extension_manager_apply_backup_config(const extension_backup_config_t *config,
+                                                size_t *applied, size_t *skipped,
+                                                bool *restart_required)
+{
+    if (!config || !applied || !skipped || !restart_required ||
+        (config->present_mask & ~((1U << EXTENSION_MODULE_COUNT) - 1U)) ||
+        (config->enabled_mask & ~config->present_mask)) return ESP_ERR_INVALID_ARG;
+    *applied = 0;
+    *skipped = 0;
+    *restart_required = false;
+    esp_err_t err = ESP_OK;
+    for (extension_module_id_t module = 0; module < EXTENSION_MODULE_COUNT; ++module) {
+        if (!(config->present_mask & (1U << module))) continue;
+        if (!module_included(module)) {
+            (*skipped)++;
+            continue;
+        }
+        err = storage_manager_init_optional_partition(module_partition(module));
+        if (err != ESP_OK) return err;
+#if LIGHTGW_HAS_BH1750_EXTENSION
+        if (module == EXTENSION_MODULE_BH1750) {
+            bh1750_extension_config_t imported = {
+                .version = BH1750_EXTENSION_CONFIG_VERSION,
+                .sample_period_seconds = config->bh1750_sample_period_seconds,
+                .night_start_minute = config->bh1750_night_start_minute,
+                .night_end_minute = config->bh1750_night_end_minute,
+                .night_lux_threshold = config->bh1750_night_lux_threshold,
+                .consecutive_anomaly_limit = config->bh1750_consecutive_anomaly_limit,
+                .calibration_valid_mask = config->bh1750_calibration_valid_mask,
+            };
+            memcpy(imported.calibration_lux, config->bh1750_calibration_lux,
+                   sizeof(imported.calibration_lux));
+            err = bh1750_extension_set_config(&imported);
+        }
+#endif
+#if LIGHTGW_HAS_SHT31_EXTENSION
+        if (module == EXTENSION_MODULE_SHT31) {
+            const sht31_extension_config_t imported = {
+                .version = SHT31_EXTENSION_CONFIG_VERSION,
+                .sample_period_seconds = config->sht31_sample_period_seconds,
+            };
+            err = sht31_extension_set_config(&imported);
+        }
+#endif
+        if (err != ESP_OK) return err;
+        bool enabled = (config->enabled_mask & (1U << module)) != 0;
+        bool module_restart = false;
+        if (s_started) {
+            err = extension_manager_set_enabled(module, enabled, &module_restart);
+        } else {
+            err = persist_enabled(module, enabled);
+            if (err == ESP_OK) s_enabled[module] = enabled;
+        }
+        if (err != ESP_OK) return err;
+        *restart_required |= module_restart;
+        (*applied)++;
+    }
+    return ESP_OK;
 }

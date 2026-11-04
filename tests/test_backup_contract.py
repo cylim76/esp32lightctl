@@ -2,6 +2,9 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 source = (root / "main/backup_restore.c").read_text(encoding="utf-8")
+manager = (root / "main/extension_manager.c").read_text(encoding="utf-8")
+bh1750 = (root / "extensions/bh1750/bh1750_extension.c").read_text(encoding="utf-8")
+sht31 = (root / "extensions/sht31/sht31_extension.c").read_text(encoding="utf-8")
 web = (root / "main/web_server.c").read_text(encoding="utf-8")
 html = (root / "main/web/index.html").read_text(encoding="utf-8")
 main = (root / "main/main.c").read_text(encoding="utf-8")
@@ -17,9 +20,20 @@ required_source = [
     '"admin_password"',
     '"rainmaker_credentials"',
     '"explicit_off_only"',
+    "extension_manager_get_backup_config",
+    "extension_manager_apply_backup_config",
+    '"calibration_lux"',
+    '"sample_period_seconds"',
+    "backup_transaction_v1_t",
 ]
 for marker in required_source:
     assert marker in source, marker
+assert "bh1750_extension_read_config" in manager
+assert "sht31_extension_read_config" in manager
+assert "if (loaded) return ESP_OK;" in bh1750
+assert "return load_config(config);" in bh1750
+assert "if (loaded) return ESP_OK;" in sht31
+assert "return load_config(config);" in sht31
 assert main.index("backup_restore_recover_pending") < main.index("settings_init()")
 for route in ("/api/backup/export", "/api/backup/import/validate", "/api/backup/import/commit"):
     assert route in web, route
