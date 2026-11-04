@@ -192,3 +192,10 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - FULL→CORE 保留 Wi-Fi/管理员、Zigbee、IR、运行状态、56 条任务、Sensor/Cloud 数据；CORE 更新核心配置后再切回 FULL，扩展数据重新可见：HOST SIMULATED PASS。
 - `ROLLBACK.md` 要求先备份完整 8 MiB 及关键分区，并明确禁止 `erase-flash`：DOCUMENT CONTRACT PASS。
 - 真实开发板 FULL→CORE→FULL、断电和失败回退：HARDWARE NOT TESTED；因此没有创建 stable Git Tag。
+## P6 文档与交付契约（2026-11-04）
+
+- 14 份必交文档存在且可由 README 到达：`DELIVERY_DOCS PASS`。
+- 模块、传感器、RainMaker 和遗漏审计必须显式区分 `IMPLEMENTED`、`BUILD PASS`、`SOFTWARE TEST PASS` 与 `NOT TESTED`；自动检查已覆盖。
+- `HARDWARE_TEST_RECORD.md` 的每项状态只允许 `PASS`、`FAIL` 或 `NOT TESTED`；本轮 70 项仍全部为 `NOT TESTED`，没有用编译或 QEMU 结果冒充实物通过。
+- 四种正式固件变体和稳定 Tag 门禁均有文档契约；由于尚无实机完整验收，本轮不创建 `core-stable-v1.0`。
+- 本节只验证文档、状态和工作流契约；P4 的 Stage 1～5、四变体、C6 测试镜像真实构建结果仍适用于当前固件源码，P5/P6 未修改固件源码。

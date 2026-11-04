@@ -22,7 +22,8 @@ assert "SUMMARY PASS: 16 tests" not in workflow
 assert 'grep -q "PHASE_A_C_TEST FAIL"' in workflow
 
 for test in ("test_variant_rollback.py", "test_backup_contract.py",
-             "test_backup_restore.py", "test_ci_workflow.py"):
+             "test_backup_restore.py", "test_ci_workflow.py",
+             "test_delivery_docs.py"):
     assert test in workflow
 
 print("CI_WORKFLOW_CONTRACT PASS")

@@ -28,3 +28,16 @@
 2. 每阶段独立提交；本地 PASS 与 GitHub CI PASS 分开记录。
 3. 传感器软件测试使用可注入 I²C 传输层；没有目标硬件日志时保持 `NOT TESTED`。
 4. RainMaker 源码和构建可标记 IMPLEMENTED/BUILD PASS；真实 TLS/MQTT、账户绑定和 App 控制在取得云端日志前必须保持 CLOUD/HARDWARE NOT TESTED。
+
+## 分阶段交付记录
+
+| 阶段 | Git 提交 | 自动验收状态 | 仍需实物/云端验证 |
+|---|---|---|---|
+| P0 CI 修复 | `685abea96e434c966687f9279f0d514f9c937889` | GitHub Actions `41742751482` PASS | 无（仅 CI 基础设施） |
+| P1/P2 运行时管理与传感器 | `c99c2c82793614e4cc63ebb0b30bdaa7b4df2a49` | GitHub Actions `41751177639` PASS | BH1750/SHT31 精度、拔插、I²C 共存、启停 Heap |
+| P3 RainMaker | `1d64b595da2b7d10a7f50305b07283d125fb029d` | GitHub Actions `41755616056` PASS | Claiming、账户绑定、TLS/MQTT、App 控制和断云隔离 |
+| P4 扩展配置备份 | `5f51fcb1a5a0aca3c03033d677f1888918fe47af` | 本地完整 `check-all.bat` PASS；GitHub Actions `41786371818` PASS | 实板 NVS、断电回滚、新板恢复 |
+| P5 安全回退 | `0dd5c974f482e4dcbbe9b9d218da2dfee19ccccd` | 数据保留模拟和变体契约 PASS；GitHub Actions `41786731060` PASS | FULL→CORE→FULL 实板回退 |
+| P6 文档验收 | 当前提交 | `test_delivery_docs.py` 检查文档、状态和 Tag 门禁 | `HARDWARE_TEST_RECORD.md` 中全部项目 |
+
+最终 GitHub Actions 只有在远端工作流全部结束且结论为 `success` 后才报告 CI PASS；运行中状态不会被写成 PASS。

@@ -124,6 +124,8 @@ Flash/NVS 写入点、分区用途、非破坏性恢复策略和迁移风险见 
 
 配置备份格式、敏感数据排除项、事务回滚和更换开发板后的重新配对流程见 [BACKUP_RESTORE.md](BACKUP_RESTORE.md)。
 
+本轮 P0～P6 遗漏审计和逐项验收见 [OMISSION_AUDIT.md](OMISSION_AUDIT.md)；软件、模拟、构建及资源结果见 [QUALITY_TEST_REPORT.md](QUALITY_TEST_REPORT.md) 和 [BUILD.md](BUILD.md)，实物项目只在 [HARDWARE_TEST_RECORD.md](HARDWARE_TEST_RECORD.md) 中登记。
+
 ## USB 烧录与监控
 
 将 DevKitC-1 的 USB 口连接电脑，先识别串口，再执行：

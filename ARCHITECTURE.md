@@ -47,4 +47,4 @@ Web 和调度器不再直接调用 Zigbee 或 RMT。`device_control.c` 是唯一
 
 ## 验证边界
 
-Phase A 已通过 Stage 1～5 编译、网页 JavaScript 解析、A～L 时间/调度模拟，以及真实生产 C 模块的 8 项 ESP32-C3 QEMU 执行。QEMU 结果属于 `SIMULATED PASS`；同一测试工程另生成 ESP32-C6 可烧录镜像，但目标板尚未执行。Zigbee/RMT/DS3231 的时序、电气和 RF 行为仍以 `HARDWARE_TEST_RECORD.md` 为准。
+Phase A 已通过 Stage 1～5 编译、网页 JavaScript 解析、A～L 时间/调度模拟，以及真实生产 C 模块的 18 项 ESP32-C3 QEMU 执行。QEMU 结果属于 `SIMULATED PASS`；同一测试工程另生成 ESP32-C6 可烧录镜像，但目标板尚未执行。Zigbee/RMT/DS3231、BH1750/SHT31 和 RainMaker 的时序、电气、RF 及真实云端行为仍以 `HARDWARE_TEST_RECORD.md` 为准。
