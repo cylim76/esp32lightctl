@@ -110,7 +110,7 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - Zigbee 栈、Wi-Fi 驱动和 coredump 的内部写入不完全受应用层写入计数覆盖。
 - 用户确认的恢复出厂设置是多分区操作；若擦除过程中再次断电，可能形成部分擦除，只能通过串口/页面诊断和重新确认恢复，无法事务回滚。
 - 当前仍是 factory-only 分区表，无双 OTA；启用 OTA 属于未来有迁移风险的分区变更。
-- 管理页仍使用局域网 HTTP Basic，量产环境的 TLS、Flash Encryption/NVS Encryption 需另行设计。
+- 管理页使用表单登录和 RAM 会话令牌；登录请求仍是局域网明文 HTTP，量产环境的 TLS、Flash Encryption/NVS Encryption 需另行设计。
 
 不存在自动破坏性迁移；存在且明确记录的破坏性操作只有用户确认恢复出厂设置、手工 `erase-flash` 和未来分区重排。
 
@@ -140,7 +140,7 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 
 ### 未自动或未实物验证
 
-- 浏览器与真实 ESP32-C6 间的下载/上传和 HTTP Basic 行为：NOT TESTED。
+- 浏览器与真实 ESP32-C6 间的下载/上传行为：NOT TESTED；表单登录、会话令牌和旧哈希迁移正在目标板复测。
 - 主 NVS/IR NVS 每个写入窗口的真实拔电恢复：NOT TESTED。
 - 最大 48 KiB JSON 在 C6 上的实际堆峰值和碎片恢复：NOT TESTED。
 - 导入两组真实 LG 码后的空调响应、新板 Aqara 重新配对/端点确认：NOT TESTED。
@@ -167,7 +167,7 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - Claiming、用户账户绑定、TLS/MQTT、云端断线重连、手机 App 控制、受控重启后的禁用：CLOUD/HARDWARE NOT TESTED。
 - RainMaker 停用不会尝试不安全的热销毁；配置先持久化，API 明确返回 `restart_required`。受控重启行为仍需目标板验证。
 
-本功能没有破坏性数据迁移，不会擦除任何整个分区。SHA-256 是完整性检查而非数字签名；HTTP Basic 无 TLS，只能在可信本地网络或安全通道使用。
+本功能没有破坏性数据迁移，不会擦除任何整个分区。SHA-256 是完整性检查而非数字签名；管理登录和备份传输没有 TLS，只能在可信本地网络或安全通道使用。
 
 ## P4 扩展配置备份与事务恢复结果（2026-11-04）
 
@@ -199,3 +199,17 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - `HARDWARE_TEST_RECORD.md` 的每项状态只允许 `PASS`、`FAIL` 或 `NOT TESTED`；本轮 70 项仍全部为 `NOT TESTED`，没有用编译或 QEMU 结果冒充实物通过。
 - 四种正式固件变体和稳定 Tag 门禁均有文档契约；由于尚无实机完整验收，本轮不创建 `core-stable-v1.0`。
 - 本节只验证文档、状态和工作流契约；P4 的 Stage 1～5、四变体、C6 测试镜像真实构建结果仍适用于当前固件源码，P5/P6 未修改固件源码。
+
+## Stage 1 首次实机缺陷修复（2026-11-06）
+
+确定问题与修复：
+
+- `backup_restore.c` 在启动恢复路径把大型原生备份载荷放在 `app_main` 栈上，实机可触发栈故障；改为限额堆分配，并增加源码契约测试。
+- 每个 HTTP Basic API 请求都在单核 C6 上执行 120,000 次 PBKDF2，`httpd` 长时间占用 CPU 并触发任务看门狗；改为一次表单登录、随机 RAM 会话令牌和 12 小时滑动过期。旧 120,000 次凭据继续兼容，首次成功登录后异步迁移到 8,192 次，派生循环主动让出 CPU。
+- `time_manager.c` 在 critical section 内调用本地时间换算，NTP 成功后触发 Newlib 锁异常；所有相关换算移到临界区外。DS3231 离线时不再尝试 I2C 写入，只记录 `ESP_ERR_NOT_FOUND`。
+- 临时配网热点改为每次随机 10 位纯数字 WPA2 密码，仅串口显示且配网完成关闭。
+- `flash.bat` 和 `monitor.bat` 会优先自动加载相邻的 ESP-IDF 5.5.1 环境，减少命令提示符未执行 `export.bat` 的失败。
+
+实际自动检查：`check-all.bat` PASS；包含存储静态审计、备份恢复、认证、时间管理、交付文档、扩展/RainMaker 契约、调度模拟、网页 JavaScript、C6 C 测试镜像构建，以及 Stage 1～5 和四种正式固件的真实 build/size/size-components。PBKDF2 生产 C 实现使用标准 SHA-256 向量测试。详细体积和 SHA-256 见 `BUILD.md`。
+
+实际硬件检查：Stage 1 烧录、Wi-Fi STA、DHCP、NTP、NVS 配置保留和约 15 分钟空闲资源趋势通过；NTP 修复后未再次崩溃，Free Heap 稳定约 283 KB。mDNS 在固件端发布成功但当前客户端无法解析，记录 FAIL 并保留 IPv4 回退。管理员首次登录迁移、新版数字配网密码以及断线重连仍需实机复测；Zigbee、RTC、红外、传感器和 RainMaker 不因本轮 Stage 1 结果改为硬件 PASS。

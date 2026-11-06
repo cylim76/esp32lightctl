@@ -140,14 +140,17 @@ static void perform_ntp_sync(ntp_request_t request)
         before = s_status.now_utc;
         portEXIT_CRITICAL(&s_lock);
         accept_time(now, TIME_SOURCE_NTP);
-        esp_err_t rtc_err = rtc_manager_write_utc(now);
+        rtc_manager_status_t rtc;
+        rtc_manager_get_status(&rtc);
+        esp_err_t rtc_err = rtc.online ? rtc_manager_write_utc(now) : ESP_ERR_NOT_FOUND;
         refresh_rtc_status();
+        time_t next_sync = next_daily_ntp(now);
         portENTER_CRITICAL(&s_lock);
         s_status.last_ntp_sync = now;
         snprintf(s_status.last_ntp_result, sizeof(s_status.last_ntp_result),
                  "success%s; delta=%llds", rtc_err == ESP_OK ? "; RTC updated" : "; RTC update failed",
                  (long long)(before ? now - before : 0));
-        s_status.next_ntp_sync = next_daily_ntp(now);
+        s_status.next_ntp_sync = next_sync;
         portEXIT_CRITICAL(&s_lock);
         ESP_LOGI(TAG, "NTP sync success request=%s RTC=%s", request == NTP_REQUEST_MANUAL ? "manual" : "auto",
                  esp_err_to_name(rtc_err));
@@ -188,8 +191,9 @@ static void time_task(void *arg)
                 if (!s_status.ntp_in_progress && uxQueueMessagesWaiting(s_requests) == 0 &&
                     xQueueSend(s_requests, &request, 0) == pdTRUE) s_last_daily_key = date_key;
             }
+            time_t next_sync = next_daily_ntp(now);
             portENTER_CRITICAL(&s_lock);
-            s_status.next_ntp_sync = next_daily_ntp(now);
+            s_status.next_ntp_sync = next_sync;
             portEXIT_CRITICAL(&s_lock);
         }
         ntp_request_t request;
@@ -269,7 +273,9 @@ esp_err_t time_manager_set_local(int year, int month, int day, int hour, int min
         roundtrip.tm_hour != hour || roundtrip.tm_min != minute || roundtrip.tm_sec != second ||
         !time_manager_epoch_valid(value)) return ESP_ERR_INVALID_ARG;
     accept_time(value, TIME_SOURCE_MANUAL);
-    esp_err_t rtc_err = rtc_manager_write_utc(value);
+    rtc_manager_status_t rtc;
+    rtc_manager_get_status(&rtc);
+    esp_err_t rtc_err = rtc.online ? rtc_manager_write_utc(value) : ESP_ERR_NOT_FOUND;
     refresh_rtc_status();
     if (rtc_err != ESP_OK) set_error("ESP32 time set manually; DS3231 write failed");
     ESP_LOGW(TAG, "Administrator set local time %04d-%02d-%02d %02d:%02d:%02d CST; RTC=%s",

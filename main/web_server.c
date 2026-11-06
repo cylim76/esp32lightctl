@@ -10,12 +10,12 @@
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "extension_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "mbedtls/base64.h"
 #include "settings.h"
 #include "storage_manager.h"
 #include "stage_config.h"
@@ -37,6 +37,12 @@
 static const char *TAG = "web";
 static httpd_handle_t s_server;
 static int64_t s_last_backup_upload_us;
+#define AUTH_TOKEN_BYTES 32
+#define AUTH_SESSION_TTL_US (12LL * 60LL * 60LL * 1000000LL)
+static uint8_t s_auth_session[AUTH_TOKEN_BYTES];
+static bool s_auth_session_valid;
+static int64_t s_auth_session_expires_us;
+static int64_t s_last_auth_attempt_us;
 extern const unsigned char index_html_start[] asm("_binary_index_html_start");
 extern const unsigned char index_html_end[] asm("_binary_index_html_end");
 
@@ -70,32 +76,75 @@ static esp_err_t send_command_accepted(httpd_req_t *req, uint32_t command_id)
 }
 #endif
 
+static bool constant_time_equal(const uint8_t *a, const uint8_t *b, size_t length)
+{
+    uint8_t difference = 0;
+    for (size_t i = 0; i < length; ++i) difference |= a[i] ^ b[i];
+    return difference == 0;
+}
+
+static void hex_encode(const uint8_t *input, size_t length, char *output)
+{
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < length; ++i) {
+        output[i * 2] = digits[input[i] >> 4];
+        output[i * 2 + 1] = digits[input[i] & 0x0f];
+    }
+    output[length * 2] = '\0';
+}
+
+static int hex_nibble(char value)
+{
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+static bool hex_decode_fixed(const char *input, uint8_t *output, size_t output_length)
+{
+    if (!input || strlen(input) != output_length * 2) return false;
+    for (size_t i = 0; i < output_length; ++i) {
+        int high = hex_nibble(input[i * 2]);
+        int low = hex_nibble(input[i * 2 + 1]);
+        if (high < 0 || low < 0) return false;
+        output[i] = (uint8_t)((high << 4) | low);
+    }
+    return true;
+}
+
 static bool authorized(httpd_req_t *req)
 {
     if (wifi_manager_is_provisioning() && !settings_get()->auth_configured) return true;
-    size_t len = httpd_req_get_hdr_value_len(req, "Authorization");
-    if (len < 7 || len > 200) goto denied;
-    char *header = malloc(len + 1);
-    if (!header) goto denied;
-    if (httpd_req_get_hdr_value_str(req, "Authorization", header, len + 1) != ESP_OK || strncmp(header, "Basic ", 6) != 0) {
-        free(header);
-        goto denied;
+    int64_t now = esp_timer_get_time();
+    size_t length = httpd_req_get_hdr_value_len(req, "Cookie");
+    if (!s_auth_session_valid || now >= s_auth_session_expires_us || length < 80 || length > 512) goto denied;
+    char *cookie = malloc(length + 1);
+    if (!cookie) goto denied;
+    bool valid = false;
+    if (httpd_req_get_hdr_value_str(req, "Cookie", cookie, length + 1) == ESP_OK) {
+        const char *name = "lightgw_session=";
+        char *token = strstr(cookie, name);
+        if (token) {
+            token += strlen(name);
+            uint8_t candidate[AUTH_TOKEN_BYTES];
+            char encoded[AUTH_TOKEN_BYTES * 2 + 1];
+            size_t token_length = strcspn(token, "; ");
+            if (token_length == AUTH_TOKEN_BYTES * 2) {
+                memcpy(encoded, token, token_length);
+                encoded[token_length] = '\0';
+                valid = hex_decode_fixed(encoded, candidate, sizeof(candidate)) &&
+                        constant_time_equal(candidate, s_auth_session, sizeof(candidate));
+            }
+        }
     }
-    unsigned char decoded[128];
-    size_t out_len = 0;
-    int rc = mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &out_len,
-                                   (unsigned char *)header + 6, strlen(header + 6));
-    free(header);
-    if (rc != 0 || out_len >= sizeof(decoded)) goto denied;
-    decoded[out_len] = '\0';
-    char *colon = strchr((char *)decoded, ':');
-    if (!colon) goto denied;
-    *colon = '\0';
-    if (settings_verify_admin((char *)decoded, colon + 1)) return true;
+    free(cookie);
+    if (valid) {
+        s_auth_session_expires_us = now + AUTH_SESSION_TTL_US;
+        return true;
+    }
 denied:
-    httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ESP32 Light Gateway\"");
-    httpd_resp_sendstr(req, "Authentication required");
+    send_json_error(req, "401 Unauthorized", "Administrator login required");
     return false;
 }
 
@@ -132,6 +181,75 @@ static char *receive_body(httpd_req_t *req, size_t maximum, size_t *length_out)
     }
     *length_out = total;
     return body;
+}
+
+static esp_err_t auth_info_get(httpd_req_t *req)
+{
+    app_settings_t config;
+    settings_copy(&config);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return ESP_ERR_NO_MEM;
+    cJSON_AddTrueToObject(root, "ok");
+    cJSON_AddBoolToObject(root, "configured", config.auth_configured);
+    cJSON_AddStringToObject(root, "username", config.auth_configured ? config.admin_user : "admin");
+    cJSON_AddBoolToObject(root, "legacy_upgrade_required",
+                          config.auth_configured && config.auth_iterations != APP_AUTH_ITERATIONS);
+    char *text = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!text) return ESP_ERR_NO_MEM;
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = httpd_resp_sendstr(req, text);
+    free(text);
+    return err;
+}
+
+static esp_err_t auth_login_post(httpd_req_t *req)
+{
+    int64_t now = esp_timer_get_time();
+    if (s_last_auth_attempt_us && now - s_last_auth_attempt_us < 1000000LL) {
+        return send_json_error(req, "429 Too Many Requests", "Wait before another login attempt");
+    }
+    s_last_auth_attempt_us = now;
+    cJSON *json = receive_json(req);
+    cJSON *user = json ? cJSON_GetObjectItem(json, "username") : NULL;
+    cJSON *password = json ? cJSON_GetObjectItem(json, "password") : NULL;
+    char user_copy[33] = {0};
+    char password_copy[65] = {0};
+    bool request_valid = cJSON_IsString(user) && cJSON_IsString(password) &&
+                         strlen(user->valuestring) <= 32 && strlen(password->valuestring) <= 64;
+    if (request_valid) {
+        strlcpy(user_copy, user->valuestring, sizeof(user_copy));
+        strlcpy(password_copy, password->valuestring, sizeof(password_copy));
+        memset(password->valuestring, 0, strlen(password->valuestring));
+    }
+    cJSON_Delete(json);
+    bool accepted = request_valid && settings_verify_admin(user_copy, password_copy);
+    if (!accepted) {
+        memset(password_copy, 0, sizeof(password_copy));
+        memset(user_copy, 0, sizeof(user_copy));
+        return send_json_error(req, "401 Unauthorized", "Invalid administrator credentials");
+    }
+
+    esp_fill_random(s_auth_session, sizeof(s_auth_session));
+    s_auth_session_valid = true;
+    s_auth_session_expires_us = esp_timer_get_time() + AUTH_SESSION_TTL_US;
+    char token[AUTH_TOKEN_BYTES * 2 + 1];
+    char cookie[160];
+    hex_encode(s_auth_session, sizeof(s_auth_session), token);
+    snprintf(cookie, sizeof(cookie),
+             "lightgw_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200", token);
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "application/json");
+    ESP_LOGI(TAG, "Administrator session established; subsequent requests use an in-RAM token");
+    esp_err_t response = httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"Authenticated\"}");
+    esp_err_t upgrade = settings_upgrade_admin_hash_async(user_copy, password_copy);
+    if (upgrade != ESP_OK) ESP_LOGW(TAG, "Could not schedule legacy administrator hash upgrade: %s",
+                                    esp_err_to_name(upgrade));
+    memset(password_copy, 0, sizeof(password_copy));
+    memset(user_copy, 0, sizeof(user_copy));
+    return response;
 }
 
 static bool backup_authorized(httpd_req_t *req)
@@ -233,7 +351,6 @@ static esp_err_t backup_commit_post(httpd_req_t *req)
 
 static esp_err_t index_get(httpd_req_t *req)
 {
-    if (!authorized(req)) return ESP_OK;
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, (const char *)index_html_start, index_html_end - index_html_start);
@@ -1063,6 +1180,8 @@ esp_err_t web_server_start(void)
     ESP_RETURN_ON_ERROR(httpd_start(&s_server, &cfg), TAG, "HTTP server start");
     const httpd_uri_t handlers[] = {
         {.uri = "/", .method = HTTP_GET, .handler = index_get},
+        {.uri = "/api/auth/info", .method = HTTP_GET, .handler = auth_info_get},
+        {.uri = "/api/auth/login", .method = HTTP_POST, .handler = auth_login_post},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_get},
         {.uri = "/api/diagnostics/resources", .method = HTTP_GET, .handler = resources_get},
         {.uri = "/api/storage/factory-reset", .method = HTTP_POST, .handler = factory_reset_post},

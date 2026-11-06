@@ -1,14 +1,15 @@
 #include "settings.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include "app_config.h"
+#include "auth_password.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "mbedtls/md.h"
-#include "mbedtls/pkcs5.h"
+#include "freertos/task.h"
 #include "nvs.h"
 #include "storage_manager.h"
 
@@ -16,6 +17,7 @@ static const char *TAG = "settings";
 static app_settings_t s_cfg;
 static SemaphoreHandle_t s_cfg_lock;
 static bool s_force_schedule_write;
+static bool s_auth_migration_pending;
 
 static esp_err_t open_settings_rw(nvs_handle_t *nvs, const char *operation)
 {
@@ -43,11 +45,18 @@ static bool valid_device_name(const char *name)
     return true;
 }
 
+static esp_err_t derive_password_iterations(const char *password, const uint8_t *salt,
+                                            uint32_t iterations, uint8_t *out)
+{
+    /* ESP32-C6 is single-core. Yielding during the legacy 120k derivation
+       prevents the HTTP task from starving IDLE and firing TWDT. */
+    return auth_password_pbkdf2_sha256(password, salt, APP_AUTH_SALT_LEN,
+                                       iterations, 64, out);
+}
+
 static esp_err_t derive_password(const char *password, const uint8_t *salt, uint8_t *out)
 {
-    return mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
-        (const unsigned char *)password, strlen(password), salt, APP_AUTH_SALT_LEN,
-        APP_AUTH_ITERATIONS, APP_AUTH_HASH_LEN, out) == 0 ? ESP_OK : ESP_FAIL;
+    return derive_password_iterations(password, salt, APP_AUTH_ITERATIONS, out);
 }
 
 static bool constant_time_equal(const uint8_t *a, const uint8_t *b, size_t len)
@@ -95,6 +104,7 @@ esp_err_t settings_init(void)
     strlcpy(s_cfg.admin_user, "admin", sizeof(s_cfg.admin_user));
     strlcpy(s_cfg.device_name, "lightgw", sizeof(s_cfg.device_name));
     strlcpy(s_cfg.timezone, APP_TIMEZONE_DEFAULT, sizeof(s_cfg.timezone));
+    s_cfg.auth_iterations = APP_AUTH_ITERATIONS;
 
     if (!storage_manager_primary_ready()) {
         ESP_LOGE(TAG, "Primary NVS unavailable; using volatile defaults without erasing stored data");
@@ -122,6 +132,15 @@ esp_err_t settings_init(void)
     if (nvs_get_blob(nvs, "auth_salt", s_cfg.auth_salt, &len) == ESP_OK && len == sizeof(s_cfg.auth_salt)) {
         len = sizeof(s_cfg.auth_hash);
         s_cfg.auth_configured = nvs_get_blob(nvs, "auth_hash", s_cfg.auth_hash, &len) == ESP_OK && len == sizeof(s_cfg.auth_hash);
+        uint32_t saved_iterations = 0;
+        esp_err_t iteration_err = nvs_get_u32(nvs, "auth_iter", &saved_iterations);
+        if (iteration_err == ESP_OK &&
+            saved_iterations >= 1000 && saved_iterations <= 1000000) {
+            s_cfg.auth_iterations = saved_iterations;
+        } else if (iteration_err == ESP_ERR_NVS_NOT_FOUND && s_cfg.auth_configured) {
+            /* Firmware before auth_iter always used 120000 iterations. */
+            s_cfg.auth_iterations = APP_AUTH_LEGACY_ITERATIONS;
+        }
     }
     bool migrated_schedules = false;
     uint8_t schedule_version = 0;
@@ -280,6 +299,7 @@ esp_err_t settings_save_admin(const char *user, const char *password)
     esp_err_t err = nvs_set_str(nvs, "admin_user", user);
     if (err == ESP_OK) err = nvs_set_blob(nvs, "auth_salt", salt, sizeof(salt));
     if (err == ESP_OK) err = nvs_set_blob(nvs, "auth_hash", hash, sizeof(hash));
+    if (err == ESP_OK) err = nvs_set_u32(nvs, "auth_iter", APP_AUTH_ITERATIONS);
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
     storage_manager_record_write("nvs", "admin", err, true);
@@ -287,7 +307,38 @@ esp_err_t settings_save_admin(const char *user, const char *password)
         strlcpy(s_cfg.admin_user, user, sizeof(s_cfg.admin_user));
         memcpy(s_cfg.auth_salt, salt, sizeof(salt));
         memcpy(s_cfg.auth_hash, hash, sizeof(hash));
+        s_cfg.auth_iterations = APP_AUTH_ITERATIONS;
         s_cfg.auth_configured = true;
+    }
+    return err;
+}
+
+esp_err_t settings_save_admin_verifier(const char *user, const uint8_t *salt, size_t salt_len,
+                                       const uint8_t *hash, size_t hash_len,
+                                       uint32_t iterations)
+{
+    if (!user || strlen(user) < 1 || strlen(user) > 32 ||
+        !salt || salt_len != APP_AUTH_SALT_LEN || !hash || hash_len != APP_AUTH_HASH_LEN ||
+        iterations != APP_AUTH_ITERATIONS) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t nvs;
+    ESP_RETURN_ON_ERROR(open_settings_rw(&nvs, "admin_verifier_open"), TAG, "open NVS");
+    esp_err_t err = nvs_set_str(nvs, "admin_user", user);
+    if (err == ESP_OK) err = nvs_set_blob(nvs, "auth_salt", salt, salt_len);
+    if (err == ESP_OK) err = nvs_set_blob(nvs, "auth_hash", hash, hash_len);
+    if (err == ESP_OK) err = nvs_set_u32(nvs, "auth_iter", iterations);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    storage_manager_record_write("nvs", "admin_verifier", err, true);
+    if (err == ESP_OK) {
+        xSemaphoreTake(s_cfg_lock, portMAX_DELAY);
+        strlcpy(s_cfg.admin_user, user, sizeof(s_cfg.admin_user));
+        memcpy(s_cfg.auth_salt, salt, sizeof(s_cfg.auth_salt));
+        memcpy(s_cfg.auth_hash, hash, sizeof(s_cfg.auth_hash));
+        s_cfg.auth_iterations = iterations;
+        s_cfg.auth_configured = true;
+        xSemaphoreGive(s_cfg_lock);
     }
     return err;
 }
@@ -296,8 +347,62 @@ bool settings_verify_admin(const char *user, const char *password)
 {
     if (!s_cfg.auth_configured || !user || !password || strcmp(user, s_cfg.admin_user) != 0) return false;
     uint8_t hash[APP_AUTH_HASH_LEN];
-    if (derive_password(password, s_cfg.auth_salt, hash) != ESP_OK) return false;
-    return constant_time_equal(hash, s_cfg.auth_hash, sizeof(hash));
+    if (derive_password_iterations(password, s_cfg.auth_salt, s_cfg.auth_iterations, hash) != ESP_OK) return false;
+    bool accepted = constant_time_equal(hash, s_cfg.auth_hash, sizeof(hash));
+    memset(hash, 0, sizeof(hash));
+    return accepted;
+}
+
+typedef struct {
+    char user[33];
+    char password[65];
+} auth_migration_args_t;
+
+static void auth_migration_task(void *argument)
+{
+    auth_migration_args_t *args = argument;
+    uint8_t salt[APP_AUTH_SALT_LEN];
+    uint8_t hash[APP_AUTH_HASH_LEN];
+    esp_fill_random(salt, sizeof(salt));
+    esp_err_t err = derive_password(args->password, salt, hash);
+    if (err == ESP_OK) {
+        err = settings_save_admin_verifier(args->user, salt, sizeof(salt), hash, sizeof(hash),
+                                           APP_AUTH_ITERATIONS);
+    }
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Administrator hash migrated from legacy %u to %u iterations",
+                 APP_AUTH_LEGACY_ITERATIONS, APP_AUTH_ITERATIONS);
+    } else {
+        ESP_LOGE(TAG, "Administrator hash migration failed: %s; legacy verifier retained",
+                 esp_err_to_name(err));
+    }
+    memset(hash, 0, sizeof(hash));
+    memset(salt, 0, sizeof(salt));
+    memset(args, 0, sizeof(*args));
+    free(args);
+    s_auth_migration_pending = false;
+    vTaskDelete(NULL);
+}
+
+esp_err_t settings_upgrade_admin_hash_async(const char *user, const char *password)
+{
+    if (!user || !password || !s_cfg.auth_configured ||
+        strcmp(user, s_cfg.admin_user) != 0 || s_cfg.auth_iterations == APP_AUTH_ITERATIONS) {
+        return ESP_OK;
+    }
+    if (s_auth_migration_pending) return ESP_OK;
+    auth_migration_args_t *args = calloc(1, sizeof(*args));
+    if (!args) return ESP_ERR_NO_MEM;
+    strlcpy(args->user, user, sizeof(args->user));
+    strlcpy(args->password, password, sizeof(args->password));
+    s_auth_migration_pending = true;
+    if (xTaskCreate(auth_migration_task, "auth_migrate", 4096, args, 2, NULL) != pdPASS) {
+        s_auth_migration_pending = false;
+        memset(args, 0, sizeof(*args));
+        free(args);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }
 
 esp_err_t settings_save_schedules(const app_schedule_entry_t *entries, size_t count, const char *timezone)

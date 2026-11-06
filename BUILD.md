@@ -197,3 +197,21 @@ ESP32-C6 C 测试镜像为 126,992 B，SHA-256 `e50367269418bd87140b57a407e1ada7
 | FULL | BUILD PASS | 1,885,024 B | 1,743,546 B | 219,740 B | `b3f1a51bcbefaed4fccc6bc06dd5e76a7894abec98a9978c60b90ea5ee651f9a` |
 
 本轮同时验证了已禁用传感器的配置读取路径：模块没有创建采样任务时，导出仍从 `sensor_nvs` 读取有效配置，不使用未初始化 RAM。以上均为本机构建结果，不代表配置导入断电、传感器或 RainMaker 硬件通过。
+
+## 2026-11-06 Stage 1 实机修复回归
+
+使用 ESP-IDF 5.5.1 执行 `check-all.bat`，真实构建 C6 C 测试镜像、Stage 1～5 以及 CORE、CORE_SENSOR、CORE_CLOUD、FULL；每个生产固件均执行 `idf.py build`、`size` 和 `size-components`，全部退出码为 0。构建目录独立，未覆盖既有 `firmware/` 发布文件。
+
+| 构建 | 结果 | 应用 `.bin` | Flash non-RAM | 静态 DIRAM | SHA-256 |
+|---|---|---:|---:|---:|---|
+| Stage 1 | BUILD PASS | 1,114,800 B | 987,486 B | 160,840 B | `6b168d22a4e8fc7f22a978ed812d2b1d6431f5d7f691386e474718d2c14a186b` |
+| Stage 2 | BUILD PASS | 1,476,480 B | 1,340,928 B | 192,878 B | `23cb2ea83ef03c4392f3b12262704adf8072416586df761c76f9452cc60e1572` |
+| Stage 3 | BUILD PASS | 1,479,824 B | 1,344,280 B | 192,878 B | `2c63cb16b870c0eb3c506e0ba36a3177f247b90901a9aee69923786376dc3d3d` |
+| Stage 4 | BUILD PASS | 1,495,840 B | 1,360,296 B | 207,230 B | `137a56284a8d83f734f58a8e5ef430796c4053c52c996ab3b4f408d768794a56` |
+| Stage 5 | BUILD PASS | 1,533,520 B | 1,393,666 B | 216,382 B | `de1032f1e2ef02dedd959a265ed851ccdabd3979e287db4345c8105bee5b2206` |
+| CORE | BUILD PASS | 1,533,504 B | 1,393,650 B | 216,382 B | `e92d2c0755e791f5eaf404738b4f910cdb46d1c252888fd6c5bff2e6cf5486c2` |
+| CORE_SENSOR | BUILD PASS | 1,542,944 B | 1,402,592 B | 217,912 B | `fdfa5ef0fdfe6bc82e17b1c3f70f89f6ade319e18f8cf063e92b54674b245fea` |
+| CORE_CLOUD | BUILD PASS | 1,876,896 B | 1,735,908 B | 218,286 B | `95e604a65fec3ca963d55c777ee145bf51e2ab32b5f8436181fa037e5d14d215` |
+| FULL | BUILD PASS | 1,886,352 B | 1,744,876 B | 219,816 B | `8f3e7257e1b9e76cc1024709c69928270769222dee69a1bd40c79c4101ebeffb` |
+
+Stage 1 已烧录 ESP32-C6-DevKitC-1-N8 实机并完成启动、Wi-Fi、DHCP、NTP 和持续空闲运行复测。表内其余结果仍仅表示本地软件构建，不代表相应硬件功能通过。

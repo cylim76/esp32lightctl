@@ -22,6 +22,11 @@ input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;
 <body><main>
 <h1>ESP32-C6 照明网关</h1><div class="muted">本地独立运行 · Zigbee Coordinator</div>
 
+<section id="login" class="card" hidden>
+ <h2>管理员登录</h2><p id="loginHint" class="muted">请输入首次配网时设置的管理账户。登录成功后使用仅存于内存的会话，不会为每个页面请求重复计算密码。</p>
+ <form onsubmit="submitLogin(event)"><label>管理用户名<input id="loginUser" maxlength="32" autocomplete="username"></label><label>管理密码<input id="loginPassword" type="password" maxlength="64" autocomplete="current-password"></label><button id="loginButton" type="submit">登录</button></form>
+</section>
+
 <section id="provision" class="card" hidden>
  <h2>Wi-Fi 配置</h2><p>输入办公室 Wi-Fi、设备名称和管理凭据。保存后设备会重启并关闭临时配置热点。</p>
  <label>Wi-Fi SSID<input id="ssid" maxlength="32"></label>
@@ -53,7 +58,7 @@ input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;
  <p class="muted">用于更换开发板时恢复三路照明定时、全部节能任务和两组 LG 明确 OFF 红外码。备份不包含 Wi-Fi/管理员密码、RainMaker 凭据、Zigbee 网络密钥、配对数据或端点映射；新网关必须重新配对并确认端点。</p>
  <div class="row"><button onclick="exportBackup()">导出配置 JSON</button><label>选择备份文件<input id="backupFile" type="file" accept="application/json,.json"></label><button onclick="validateBackup()">验证导入文件</button><button id="backupCommitButton" onclick="commitBackup()" disabled>确认并恢复</button></div>
  <div id="backupStatus" class="diag" style="margin-top:12px">尚未选择备份文件</div>
- <p class="muted">安全提示：本页面使用 HTTP Basic，没有 TLS。只可在可信的办公室本地网络、隔离 VLAN 或其他安全通道中操作；不要在公共或不受信网络上传备份。文件上限 48 KiB，连续上传至少间隔 10 秒。</p>
+ <p class="muted">安全提示：本页面使用本地 HTTP 会话认证，没有 TLS。只可在可信的办公室本地网络、隔离 VLAN 或其他安全通道中操作；不要在公共或不受信网络登录或上传备份。文件上限 48 KiB，连续上传至少间隔 10 秒。</p>
 </section>
 
 <section class="card"><h2>时间管理（北京时间 UTC+8）</h2>
@@ -92,9 +97,11 @@ input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;
 </section></div>
 </main><div id="toast"></div>
 <script>
-const names=['左','中','右'],dayNames=['日','一','二','三','四','五','六'],scheduleTargets=['左路照明','中路照明','右路照明','全部照明','LG 空调1','LG 空调2','LG 空调组'];let firstSchedule=true,firstIr=true,firstExtensions=true,provisionNameSet=false,maxSchedulesPerTarget=8,currentStage=1,backupToken='',extensionState={};
+const names=['左','中','右'],dayNames=['日','一','二','三','四','五','六'],scheduleTargets=['左路照明','中路照明','右路照明','全部照明','LG 空调1','LG 空调2','LG 空调组'];let firstSchedule=true,firstIr=true,firstExtensions=true,provisionNameSet=false,maxSchedulesPerTarget=8,currentStage=1,backupToken='',extensionState={},loginPromise=null,loginResolve=null,loginBusy=false;
 const $=id=>document.getElementById(id);const toast=(m,bad=false)=>{let e=$('toast');e.textContent=m;e.style.display='block';e.style.background=bad?'#7a3038':'#253250';setTimeout(()=>e.style.display='none',3500)};
-async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});let j;try{j=await r.json()}catch{j={error:await r.text()}}if(!r.ok)throw Error(j.error||r.statusText);return j}
+async function requireLogin(){if(!loginPromise){loginPromise=new Promise(resolve=>loginResolve=resolve);$('login').hidden=false;$('dashboard').hidden=true;try{let r=await fetch('/api/auth/info',{cache:'no-store'}),j=await r.json();if(j.username)$('loginUser').value=j.username;$('loginHint').textContent=j.legacy_upgrade_required?'这是旧版管理员散列，首次登录升级可能需要约2分钟；期间请勿刷新或断电。设备会持续让出CPU，不会触发看门狗。':'请输入管理账户。登录后12小时内使用RAM会话，密码不会在每个API请求中重复校验。'}catch(e){$('loginHint').textContent=`无法读取登录信息：${e.message}`}}return loginPromise}
+async function submitLogin(event){event.preventDefault();if(loginBusy)return;let username=$('loginUser').value.trim(),password=$('loginPassword').value;if(!username||!password){toast('请输入管理用户名和密码',true);return}loginBusy=true;$('loginButton').disabled=true;$('loginButton').textContent='正在验证，请勿刷新…';try{let r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})}),text=await r.text(),j;try{j=JSON.parse(text)}catch{j={error:text}}if(!r.ok)throw Error(j.error||r.statusText);$('loginPassword').value='';$('login').hidden=true;toast('管理员登录成功');let done=loginResolve;loginResolve=null;loginPromise=null;if(done)done()}catch(e){$('loginPassword').value='';toast(e.message,true)}finally{loginBusy=false;$('loginButton').disabled=false;$('loginButton').textContent='登录'}}
+async function api(path,body,retry=true){let r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});if(r.status===401&&retry){await requireLogin();return api(path,body,false)}let text=await r.text(),j;try{j=JSON.parse(text)}catch{j={error:text}}if(!r.ok)throw Error(j.error||r.statusText);return j}
 function dots(id,ok){$(id).classList.toggle('ok',!!ok)}
 async function refreshResources(){if(!$('dashboard')||$('dashboard').hidden)return;try{let r=await api('/api/diagnostics/resources'),tasks=(r.tasks||[]).slice().sort((a,b)=>a.stack_high_water_bytes-b.stack_high_water_bytes),events=r.memory_events||[],storage=r.storage||{},parts=storage.partitions||[];let taskText=tasks.map(t=>`${t.name}: HWM ${t.stack_high_water_bytes} B (${t.stack_high_water_words} words), ${t.state}, P${t.priority}`).join('\n')||'无任务数据';let eventText=events.map(e=>`${(e.uptime_ms/1000).toFixed(1)}s ${e.name}: free ${e.free_heap}, min ${e.minimum_free_heap}, largest ${e.largest_free_block} B`).join('\n')||'无事件数据';let storageText=parts.map(p=>`${p.name}: ${p.initialized?'ONLINE':'OFFLINE'}, used/free/total ${p.used_entries}/${p.free_entries}/${p.total_entries}, namespaces ${p.namespace_count}, err 0x${Number(p.last_error||0).toString(16)}`).join('\n')||'无分区统计';$('resourceDiagnostics').textContent=`Free Heap：${r.free_heap} bytes\nMinimum Free Heap：${r.minimum_free_heap} bytes\nLargest Free Block：${r.largest_free_block} bytes\n任务监控：${r.task_monitor_enabled?'已启用':'未启用'}${r.tasks_truncated?'（任务数超过固定容量，结果截断）':''}\n\nNVS：${storage.degraded?'DEGRADED':'正常'} · commits ${storage.writes_committed||0} · skipped ${storage.writes_skipped||0} · failures ${storage.write_failures||0} · corrupt ${storage.corruption_events||0}\n${storageText}\n最近存储错误：${storage.last_error||'none'}\n最近恢复：${storage.last_recovery||'none'}\n\n任务 Stack High Water Mark：\n${taskText}\n\n关键内存事件（最近 ${events.length} 条）：\n${eventText}`}catch(e){$('resourceDiagnostics').textContent=`资源监控读取失败：${e.message}`}}
 function buildScheduleGroups(){let root=$('scheduleGroups');root.innerHTML='';scheduleTargets.forEach((name,target)=>{let group=document.createElement('div');group.className='schedule-group';group.dataset.target=target;group.hidden=currentStage<5&&target>=4;group.innerHTML=`<h3>${name}</h3><div class="target-entries"></div><button type="button" onclick="addSchedule(${target})">增加 ${name} 任务</button>`;root.appendChild(group)})}

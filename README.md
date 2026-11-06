@@ -28,7 +28,7 @@
 - Wi-Fi 断线指数退避自动重连；串口打印连接状态和 IPv4 地址。
 - STA 地址由 DHCP 获取；联网后发布可配置的 `http://<设备名>.local` mDNS 地址，默认 `http://lightgw.local`。页面同时显示 IPv4、STA MAC 和 RSSI，mDNS 不可用时可继续使用当前 IPv4。
 - 管理员可从 Web 明确确认后进入安全重新配网：仅清除 Wi-Fi 凭据并重启到随机 WPA2 临时热点，保留原管理认证；配网完成即关闭热点。
-- 管理密码使用随机盐 + PBKDF2-HMAC-SHA256（120,000 次）保存；控制页面及 API 使用 HTTP Basic 访问控制。
+- 管理密码使用随机盐 + PBKDF2-HMAC-SHA256 保存；新凭据使用 8,192 次迭代，旧版 120,000 次凭据在首次成功登录后异步迁移。控制页面使用表单登录和仅存于 RAM 的会话令牌，避免 ESP32-C6 在每个 API 请求上重复执行高成本派生。
 - 管理页支持版本化 JSON 配置备份/恢复：覆盖 56 条定时、两组 LG OFF 码及 BH1750/SHT31/RainMaker 非敏感扩展设置，导入采用 SHA-256 校验、两阶段确认及 `runtime_nvs` 掉电回滚日志；不会导出密码、RainMaker 凭据、Zigbee 密钥/配对/端点映射。
 - Coordinator 建网、180 秒允许入网、设备 announce、Active Endpoint/Simple Descriptor/model 发现。
 - Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
@@ -169,7 +169,7 @@ idf.py -p COM7 erase-flash flash monitor
 2. 手机连接该热点，浏览器访问 `http://192.168.4.1/`。
 3. 输入办公室 Wi-Fi、设备名称（默认 `lightgw`）、管理用户名和至少 12 位管理密码。设备名仅允许小写字母、数字和中间连字符，例如 `lightgw-office1`。固件不会在日志或状态 API 中回显 Wi-Fi 密码。
 4. 保存后板子重启。串口出现 DHCP 地址和 `mDNS started` 日志，在同一局域网访问 `http://<设备名>.local`；若客户端或网络不支持 mDNS，则使用日志/页面显示的当前 IPv4。
-5. 浏览器弹出认证框时输入刚设置的管理凭据。
+5. 在页面内的管理员登录表单输入刚设置的凭据。旧固件升级后的第一次登录可能需要约两分钟完成一次旧哈希校验；成功后会异步迁移，后续登录和 API 请求不会重复执行旧版高成本校验。
 
 如果办公室 Wi-Fi 使用开放认证、WPA-Enterprise/802.1X、强制门户或仅 5 GHz，本版 STA 配置不适用。当前阈值为 WPA2-PSK，WPA2/WPA3 personal mixed AP 可按现场结果调整。
 
@@ -204,8 +204,8 @@ idf.py -p COM7 erase-flash flash monitor
 
 ## 安全边界
 
-- 随机配置热点密码只通过 USB 串口显示；管理密码只保存 PBKDF2 派生值。
-- 当前页面是 HTTP Basic **访问控制**，不是 TLS。它能阻止不知道凭据的普通局域网用户操作，但同网段主动嗅探者仍可能获得凭据。生产网络应使用受信 VLAN/访客隔离，或在前端增加 HTTPS/反向代理（这会违反“无外部服务器”的硬件限制）。
+- 临时配网热点使用每次随机生成的 10 位纯数字 WPA2 密码，只通过 USB 串口显示，配网完成即关闭；管理密码只保存 PBKDF2 派生值。
+- 当前页面的表单登录和 RAM 会话令牌提供**访问控制**，但 HTTP 本身不是 TLS。登录时凭据仍以明文 HTTP 在局域网传输，同网段主动嗅探者可能获得凭据。生产网络应使用受信 VLAN/访客隔离，或另行设计 HTTPS/安全反向代理。
 - 配置导出/导入只允许在受信局域网、隔离 VLAN 或其他安全通道使用；SHA-256 能检测文件损坏但不是防恶意修改的数字签名。
 - 默认开发构建的 NVS 没有静态加密，Wi-Fi 密码会由 ESP-IDF Wi-Fi/NVS 组件保存在 flash。若“安全保存”包含对拆机读取 flash 的防护，量产前必须启用 ESP32-C6 Flash Encryption，并按 Espressif 的量产流程保护/烧录 eFuse 密钥。该过程可能不可逆，本工程不会在普通 `flash` 命令中擅自烧 eFuse。
 - 不要把管理密码、Wi-Fi 密码或量产密钥提交到源码、`sdkconfig.defaults` 或日志。

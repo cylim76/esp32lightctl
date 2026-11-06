@@ -39,6 +39,7 @@ typedef struct {
     char admin_user[33];
     uint8_t auth_salt[16];
     uint8_t auth_hash[32];
+    uint32_t auth_iterations;
     bool auth_configured;
     uint8_t schedule_count;
     app_schedule_entry_t schedules[APP_MAX_SCHEDULES];
@@ -52,7 +53,11 @@ esp_err_t settings_save_wifi(const char *ssid, const char *password);
 esp_err_t settings_clear_wifi(void);
 esp_err_t settings_save_device_name(const char *device_name);
 esp_err_t settings_save_admin(const char *user, const char *password);
+esp_err_t settings_save_admin_verifier(const char *user, const uint8_t *salt, size_t salt_len,
+                                       const uint8_t *hash, size_t hash_len,
+                                       uint32_t iterations);
 bool settings_verify_admin(const char *user, const char *password);
+esp_err_t settings_upgrade_admin_hash_async(const char *user, const char *password);
 esp_err_t settings_save_schedules(const app_schedule_entry_t *entries, size_t count,
                                   const char *timezone);
 const char *settings_schedule_target_name(schedule_target_t target);

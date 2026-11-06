@@ -8,6 +8,7 @@ set(app_sources
     "diagnostics.c"
     "storage_manager.c"
     "backup_integrity.c"
+    "auth_password.c"
     "backup_restore.c"
     "extension_manager.c"
 )

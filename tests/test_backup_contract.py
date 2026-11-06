@@ -28,6 +28,12 @@ required_source = [
 ]
 for marker in required_source:
     assert marker in source, marker
+recover = source[source.index("esp_err_t backup_restore_recover_pending"):
+                 source.index("static cJSON *schedule_to_json")]
+assert "backup_native_payload_t previous = {0};" not in recover
+assert "backup_native_payload_t *previous = calloc(1, sizeof(*previous));" in recover
+assert "if (!previous)" in recover
+assert recover.count("free(previous);") >= 2
 assert "bh1750_extension_read_config" in manager
 assert "sht31_extension_read_config" in manager
 assert "if (loaded) return ESP_OK;" in bh1750

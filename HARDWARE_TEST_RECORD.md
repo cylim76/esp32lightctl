@@ -4,14 +4,14 @@
 
 | ID | Stage | 测试项 | 状态 | 日期/固件 | 证据或备注 |
 |---|---:|---|---|---|---|
-| HW-001 | 1 | USB 启动与串口日志 | NOT TESTED | — | 等待硬件 |
-| HW-002 | 1 | 首次配置热点与 Web 配网 | NOT TESTED | — | 等待硬件 |
-| HW-003 | 1 | Wi-Fi STA、IP、NTP、RSSI | NOT TESTED | — | 等待硬件 |
-| HW-004 | 1 | HTTP Basic 未授权访问拦截 | NOT TESTED | — | 等待硬件 |
-| HW-005 | 1 | NVS 断电持久化 | NOT TESTED | — | 等待硬件 |
+| HW-001 | 1 | USB 启动与串口日志 | PASS | 2026-11-06 / Stage 1 | J5 供电跳线修复后 COM8 可烧录、启动和持续监视 |
+| HW-002 | 1 | 首次配置热点与 Web 配网 | PASS | 2026-11-06 / Stage 1 | 已完成临时热点配网并连接 MiFi-0300；新版 10 位纯数字热点密码仍需下次重新配网复测 |
+| HW-003 | 1 | Wi-Fi STA、IP、NTP、RSSI | PASS | 2026-11-06 / Stage 1 | DHCP 192.168.1.197；NTP 获得有效北京时间；资源日志持续正常 |
+| HW-004 | 1 | 表单登录、RAM 会话及未授权访问拦截 | NOT TESTED | 2026-11-06 / Stage 1 | 已刷入修复版，等待完成旧凭据首次登录和自动迁移复测 |
+| HW-005 | 1 | NVS 断电持久化 | PASS | 2026-11-06 / Stage 1 | 多次应用刷写/复位后 Wi-Fi、设备名和管理员配置均恢复，未擦除 NVS |
 | HW-006 | 1 | Wi-Fi 断线自动重连 | NOT TESTED | — | 等待硬件 |
 | HW-007 | 1 | DHCP IPv4、STA MAC 与 RSSI 显示 | NOT TESTED | — | 等待硬件 |
-| HW-008 | 1 | 默认及自定义主机名 mDNS 解析 | NOT TESTED | — | 等待硬件 |
+| HW-008 | 1 | 默认及自定义主机名 mDNS 解析 | FAIL | 2026-11-06 / Stage 1 | 固件成功发布 lightgw.local，但当前客户端/网络无法解析；IPv4 192.168.1.197 可正常访问，需继续排查客户端 mDNS/组播/防火墙 |
 | HW-009 | 1 | 断线/重连/IP 变化后的 mDNS 更新 | NOT TESTED | — | 等待硬件 |
 | HW-010 | 1 | 管理员认证重新配网与临时 WPA2 AP | NOT TESTED | — | 等待硬件 |
 | HW-011 | 1 | DS3231 3.3V 电平、I2C GPIO6/7 与 OSF | NOT TESTED | — | 先检查成品模块上拉/充电电路 |
@@ -76,3 +76,11 @@
 | HW-441 | Backup | 禁用传感器时导出、FULL→CORE 导入跳过、回到 FULL 后设置仍保留 | NOT TESTED | — | 软件事务与兼容测试 PASS；真实 NVS/断电待测 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。
+
+## 2026-11-06 Stage 1 首次实机记录
+
+- 测试板：ESP32-C6-DevKitC-1-N8，USB 串口 COM8；J5 出厂未导通，焊接跳线后板载电源和串口恢复。实机所刷 `build-stage1/esp32c6_light_gateway.bin` SHA-256：`761b1fe7713e37b2ce0abb566f4a7254148a8a4417b511c546c694d9a6e316a7`。
+- 已确认：应用镜像可写入并校验、Wi-Fi 配置可跨复位保存、DHCP 获得 `192.168.1.197`、网页可通过 IPv4 访问、NTP 校时成功。DS3231 尚未连接时返回 `ESP_ERR_NOT_FOUND`，不阻塞系统。
+- 发现并修复：备份恢复大对象占用 `app_main` 栈；旧版每次 HTTP Basic 请求执行 120,000 次 PBKDF2 导致 `httpd` 触发任务看门狗；NTP 回调在 critical section 内调用本地时间函数导致锁异常。修复版已完成 Wi-Fi/NTP/空闲运行复测，尚待管理员首次登录迁移复测。
+- mDNS：串口显示 `http://lightgw.local` 已发布，但当前客户端无法解析，保留 FAIL；使用当前 DHCP IPv4 不受影响。
+- 当前 Stage 1 通过不代表 Zigbee、DS3231、红外、传感器或 RainMaker 硬件通过；这些项目继续保持 `NOT TESTED`。

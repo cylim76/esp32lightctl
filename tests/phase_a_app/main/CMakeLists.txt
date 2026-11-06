@@ -5,6 +5,7 @@ idf_component_register(
         "../../../main/device_state.c"
         "../../../main/scheduler_persistence.c"
         "../../../main/backup_integrity.c"
+        "../../../main/auth_password.c"
         "../../../extensions/bh1750/bh1750_protocol.c"
         "../../../extensions/sht31/sht31_protocol.c"
         "../../../extensions/rainmaker/rainmaker_control_policy.c"

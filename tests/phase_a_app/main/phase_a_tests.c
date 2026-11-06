@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "auth_password.h"
 #include "device_state.h"
 #include "backup_integrity.h"
 #include "bh1750_protocol.h"
@@ -97,6 +98,23 @@ static void test_multi_device_isolation(void)
     CHECK(zb_state_cache_get(&cache, 0x1111, 1, 30, &a));
     CHECK(zb_state_cache_get(&cache, 0x2222, 1, 30, &b));
     CHECK(a.value == ZB_CACHE_OFF && b.value == ZB_CACHE_ON);
+}
+
+static void test_pbkdf2_sha256_vectors(void)
+{
+    static const uint8_t expected_one[32] = {
+        0x12,0x0f,0xb6,0xcf,0xfc,0xf8,0xb3,0x2c,0x43,0xe7,0x22,0x52,0x56,0xc4,0xf8,0x37,
+        0xa8,0x65,0x48,0xc9,0x2c,0xcc,0x35,0x48,0x08,0x05,0x98,0x7c,0xb7,0x0b,0xe1,0x7b,
+    };
+    static const uint8_t expected_two[32] = {
+        0xae,0x4d,0x0c,0x95,0xaf,0x6b,0x46,0xd3,0x2d,0x0a,0xdf,0xf9,0x28,0xf0,0x6d,0xd0,
+        0x2a,0x30,0x3f,0x8e,0xf3,0xc2,0x51,0xdf,0xd6,0xe2,0xd8,0x5a,0x95,0x47,0x4c,0x43,
+    };
+    uint8_t output[32];
+    CHECK(auth_password_pbkdf2_sha256("password", (const uint8_t *)"salt", 4, 1, 0, output) == ESP_OK);
+    CHECK(memcmp(output, expected_one, sizeof(output)) == 0);
+    CHECK(auth_password_pbkdf2_sha256("password", (const uint8_t *)"salt", 4, 2, 0, output) == ESP_OK);
+    CHECK(memcmp(output, expected_two, sizeof(output)) == 0);
 }
 
 static void test_expired_off_is_invalid(void)
@@ -386,6 +404,7 @@ static void test_rainmaker_control_policy(void)
 
 void app_main(void)
 {
+    RUN(test_pbkdf2_sha256_vectors);
     RUN(test_multi_device_isolation);
     RUN(test_expired_off_is_invalid);
     RUN(test_read_timeout_rejects_old_off);

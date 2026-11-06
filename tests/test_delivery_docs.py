@@ -53,11 +53,17 @@ allowed = {"PASS", "FAIL", "NOT TESTED"}
 statuses = []
 for row in rows:
     fields = [field.strip() for field in row.split("|")]
+    assert len(fields) >= 8, f"malformed hardware row: {row}"
     status = fields[4]
     assert status in allowed, f"invalid hardware status {status!r}: {row}"
+    if status in {"PASS", "FAIL"}:
+        assert fields[5] not in {"", "—", "-"}, (
+            f"hardware {status} requires a dated firmware/test reference: {row}")
+        assert fields[6] not in {"", "—", "-"}, (
+            f"hardware {status} requires evidence or reproduction notes: {row}")
     statuses.append(status)
-assert set(statuses) == {"NOT TESTED"}, (
-    "hardware status changed without this delivery contract being updated")
+assert "NOT TESTED" in statuses, (
+    "unverified modules must remain explicitly NOT TESTED")
 
 variants = (ROOT / "FIRMWARE_VARIANTS.md").read_text(encoding="utf-8")
 for variant in ("`CORE`", "`CORE_SENSOR`", "`CORE_CLOUD`", "`FULL`"):

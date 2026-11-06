@@ -94,9 +94,13 @@ static esp_err_t start_provision_ap(void)
     uint8_t mac[6];
     ESP_RETURN_ON_ERROR(esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP), TAG, "read MAC");
     snprintf(s_ap_ssid, sizeof(s_ap_ssid), APP_PROVISION_AP_PREFIX "%02X%02X%02X", mac[3], mac[4], mac[5]);
-    static const char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    for (size_t i = 0; i < 16; ++i) s_ap_password[i] = alphabet[esp_random() % (sizeof(alphabet) - 1)];
-    s_ap_password[16] = '\0';
+    /* A temporary per-boot WPA2 password is printed only on USB serial. Ten
+       random decimal digits are easier to enter on a phone while retaining
+       roughly 33 bits of entropy and exceeding WPA2's eight-character floor. */
+    for (size_t i = 0; i < APP_PROVISION_PASSWORD_DIGITS; ++i) {
+        s_ap_password[i] = (char)('0' + (esp_random() % 10));
+    }
+    s_ap_password[APP_PROVISION_PASSWORD_DIGITS] = '\0';
     wifi_config_t ap = {0};
     strlcpy((char *)ap.ap.ssid, s_ap_ssid, sizeof(ap.ap.ssid));
     strlcpy((char *)ap.ap.password, s_ap_password, sizeof(ap.ap.password));

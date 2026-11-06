@@ -279,35 +279,44 @@ esp_err_t backup_restore_recover_pending(void)
     err = nvs_get_blob(nvs, BACKUP_TRANSACTION_KEY, raw, &length);
     nvs_close(nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) { free(raw); return ESP_OK; }
-    backup_native_payload_t previous = {0};
+    /* This payload contains all 56 schedules and two full IR frames. Keeping it
+       on app_main's approximately 4 KiB stack caused an immediate stack guard
+       fault on real ESP32-C6 hardware, even when no journal existed. */
+    backup_native_payload_t *previous = calloc(1, sizeof(*previous));
+    if (!previous) {
+        free(raw);
+        return ESP_ERR_NO_MEM;
+    }
     bool valid = false;
     if (err == ESP_OK && length == sizeof(backup_transaction_t)) {
         const backup_transaction_t *record = (const backup_transaction_t *)raw;
         valid = record->magic == BACKUP_TRANSACTION_MAGIC &&
                 record->version == BACKUP_TRANSACTION_VERSION &&
                 record->checksum == bytes_checksum(record, offsetof(backup_transaction_t, checksum));
-        if (valid) previous = record->previous;
+        if (valid) *previous = record->previous;
     } else if (err == ESP_OK && length == sizeof(backup_transaction_v1_t)) {
         const backup_transaction_v1_t *record = (const backup_transaction_v1_t *)raw;
         valid = record->magic == BACKUP_TRANSACTION_MAGIC && record->version == 1 &&
                 record->checksum == bytes_checksum(record, offsetof(backup_transaction_v1_t, checksum));
         if (valid) {
-            previous.schedule_count = record->previous.schedule_count;
-            memcpy(previous.schedules, record->previous.schedules, sizeof(previous.schedules));
-            strlcpy(previous.timezone, record->previous.timezone, sizeof(previous.timezone));
-            previous.ir_available = record->previous.ir_available;
-            memcpy(previous.ir_present, record->previous.ir_present, sizeof(previous.ir_present));
-            memcpy(previous.ir_codes, record->previous.ir_codes, sizeof(previous.ir_codes));
+            previous->schedule_count = record->previous.schedule_count;
+            memcpy(previous->schedules, record->previous.schedules, sizeof(previous->schedules));
+            strlcpy(previous->timezone, record->previous.timezone, sizeof(previous->timezone));
+            previous->ir_available = record->previous.ir_available;
+            memcpy(previous->ir_present, record->previous.ir_present, sizeof(previous->ir_present));
+            memcpy(previous->ir_codes, record->previous.ir_codes, sizeof(previous->ir_codes));
         }
     }
     if (!valid) {
+        free(previous);
         free(raw);
         storage_manager_record_corruption(APP_RUNTIME_STORAGE_PARTITION,
                                           "backup rollback journal invalid; retained for diagnosis");
         return ESP_ERR_INVALID_CRC;
     }
     ESP_LOGW(TAG, "Interrupted configuration import detected; restoring pre-import snapshot");
-    err = restore_snapshot_raw(&previous);
+    err = restore_snapshot_raw(previous);
+    free(previous);
     free(raw);
     if (err == ESP_OK) err = journal_clear();
     if (err == ESP_OK) diagnostics_set_error(TAG, "Interrupted import rolled back; original configuration restored");
