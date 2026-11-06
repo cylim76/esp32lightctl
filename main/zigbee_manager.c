@@ -400,6 +400,12 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
     esp_zb_app_signal_type_t type = *p;
     esp_err_t status = signal->esp_err_status;
     switch (type) {
+    case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
+        ESP_LOGI(TAG, "Initialize Zigbee stack");
+        if (esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_INITIALIZATION) != ESP_OK) {
+            diagnostics_set_error(TAG, "failed to start Zigbee initialization");
+        }
+        break;
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (status == ESP_OK) {

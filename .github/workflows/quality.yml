@@ -22,6 +22,9 @@ jobs:
       - run: python tests/test_variant_contract.py
       - run: python tests/test_variant_rollback.py
       - run: python tests/test_backup_contract.py
+      - run: python tests/test_auth_contract.py
+      - run: python tests/test_time_manager_contract.py
+      - run: python tests/test_zigbee_startup_contract.py
       - run: python tests/test_backup_restore.py
       - run: python tests/test_ci_workflow.py
       - run: python tests/test_delivery_docs.py

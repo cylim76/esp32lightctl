@@ -17,6 +17,7 @@ python tests\test_variant_rollback.py || exit /b 1
 python tests\test_backup_contract.py || exit /b 1
 python tests\test_auth_contract.py || exit /b 1
 python tests\test_time_manager_contract.py || exit /b 1
+python tests\test_zigbee_startup_contract.py || exit /b 1
 python tests\test_backup_restore.py || exit /b 1
 python tests\test_ci_workflow.py || exit /b 1
 python tests\test_delivery_docs.py || exit /b 1

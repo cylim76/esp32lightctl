@@ -155,10 +155,14 @@ static void perform_ntp_sync(ntp_request_t request)
         ESP_LOGI(TAG, "NTP sync success request=%s RTC=%s", request == NTP_REQUEST_MANUAL ? "manual" : "auto",
                  esp_err_to_name(rtc_err));
     } else {
+        bool previously_valid;
         portENTER_CRITICAL(&s_lock);
+        previously_valid = s_status.valid;
         snprintf(s_status.last_ntp_result, sizeof(s_status.last_ntp_result), "failed: %s", esp_err_to_name(err));
         portEXIT_CRITICAL(&s_lock);
-        set_error("NTP synchronization failed; previously valid local time remains valid");
+        set_error(previously_valid
+                      ? "NTP synchronization failed; previously valid local time remains valid"
+                      : "NTP synchronization failed; system time remains invalid");
     }
     portENTER_CRITICAL(&s_lock);
     s_status.ntp_in_progress = false;

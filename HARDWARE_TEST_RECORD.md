@@ -7,7 +7,7 @@
 | HW-001 | 1 | USB 启动与串口日志 | PASS | 2026-11-06 / Stage 1 | J5 供电跳线修复后 COM8 可烧录、启动和持续监视 |
 | HW-002 | 1 | 首次配置热点与 Web 配网 | PASS | 2026-11-06 / Stage 1 | 已完成临时热点配网并连接 MiFi-0300；新版 10 位纯数字热点密码仍需下次重新配网复测 |
 | HW-003 | 1 | Wi-Fi STA、IP、NTP、RSSI | PASS | 2026-11-06 / Stage 1 | DHCP 192.168.1.197；NTP 获得有效北京时间；资源日志持续正常 |
-| HW-004 | 1 | 表单登录、RAM 会话及未授权访问拦截 | NOT TESTED | 2026-11-06 / Stage 1 | 已刷入修复版，等待完成旧凭据首次登录和自动迁移复测 |
+| HW-004 | 1 | 表单登录、RAM 会话及未授权访问拦截 | PASS | 2026-11-06 / Stage 1 | 旧凭据首次登录成功，随后多次刷新复用 RAM 会话且未再触发 WDT；复位后要求重新登录符合设计 |
 | HW-005 | 1 | NVS 断电持久化 | PASS | 2026-11-06 / Stage 1 | 多次应用刷写/复位后 Wi-Fi、设备名和管理员配置均恢复，未擦除 NVS |
 | HW-006 | 1 | Wi-Fi 断线自动重连 | NOT TESTED | — | 等待硬件 |
 | HW-007 | 1 | DHCP IPv4、STA MAC 与 RSSI 显示 | NOT TESTED | — | 等待硬件 |
@@ -17,10 +17,10 @@
 | HW-011 | 1 | DS3231 3.3V 电平、I2C GPIO6/7 与 OSF | NOT TESTED | — | 先检查成品模块上拉/充电电路 |
 | HW-012 | 1 | 无网络管理员手动设置 ESP32 与 DS3231 | NOT TESTED | — | 页面使用北京时间，RTC 存 UTC |
 | HW-013 | 1 | RTC 断电恢复、NTP 02:00 同步及离线长期计时 | NOT TESTED | — | 构建/模拟通过不等于硬件通过 |
-| HW-101 | 2 | Coordinator 首次建网与恢复 | NOT TESTED | — | 等待硬件 |
-| HW-102 | 2 | Permit Join 180 秒 | NOT TESTED | — | 等待硬件 |
-| HW-103 | 2 | Wi-Fi/Zigbee 单芯片 RF 共存 | NOT TESTED | — | 等待硬件 |
-| HW-201 | 3 | QBKG25LM 加入网络 | NOT TESTED | — | 等待硬件 |
+| HW-101 | 2 | Coordinator 首次建网与恢复 | PASS | 2026-11-06 / Stage 2 | 修复 SKIP_STARTUP 信号处理后恢复 PAN 0xDD9F、信道15；首次建网路径仍需在擦除测试网络后单独复测 |
+| HW-102 | 2 | Permit Join 180 秒 | PASS | 2026-11-06 / Stage 2 | 串口记录请求、status=180，并在超时后自动 status=0 |
+| HW-103 | 2 | Wi-Fi/Zigbee 单芯片 RF 共存 | PASS | 2026-11-06 / Stage 2 | Wi-Fi 信道6、Zigbee信道15并行运行；保持 Web 可用并完成一次 D1 入网；长时压力仍未测试 |
+| HW-201 | 3 | QBKG25LM 加入网络 | PASS | 2026-11-06 / Stage 2 | 180秒窗口内收到 Device announce，短地址 0x56FC；端点发现尚未执行 |
 | HW-202 | 3 | Active Endpoint 记录 | NOT TESTED | — | 不预设 1/2/3 |
 | HW-203 | 3 | 输入/输出 Cluster 记录 | NOT TESTED | — | 不预设 state_left 等上层名 |
 | HW-204 | 3 | 左/中/右实际端点映射 | NOT TESTED | — | 控制保持锁定 |
@@ -84,3 +84,12 @@
 - 发现并修复：备份恢复大对象占用 `app_main` 栈；旧版每次 HTTP Basic 请求执行 120,000 次 PBKDF2 导致 `httpd` 触发任务看门狗；NTP 回调在 critical section 内调用本地时间函数导致锁异常。修复版已完成 Wi-Fi/NTP/空闲运行复测，尚待管理员首次登录迁移复测。
 - mDNS：串口显示 `http://lightgw.local` 已发布，但当前客户端无法解析，保留 FAIL；使用当前 DHCP IPv4 不受影响。
 - 当前 Stage 1 通过不代表 Zigbee、DS3231、红外、传感器或 RainMaker 硬件通过；这些项目继续保持 `NOT TESTED`。
+
+## 2026-11-06 Stage 2 首次实机记录
+
+- 测试板及网络：ESP32-C6-DevKitC-1-N8，COM8；Wi-Fi `MiFi-0300` 信道6，Zigbee Coordinator 信道15。实机所刷 `build-stage2/esp32c6_light_gateway.bin` SHA-256：`0afe772426ffc16f82ada103d5645b2deae8dd60394e4c367bb74b76ec29bc24`。
+- 首次缺陷：`esp_zb_start(false)` 发出 `ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP` 后，应用未启动 BDB initialization，导致 Web 显示 Zigbee 未就绪且无建网日志。增加该信号处理后，实机记录 `Initialize Zigbee stack`、`Restored Zigbee network PAN=0xdd9f channel=15`。
+- Permit Join：页面请求180秒后串口记录 `Permit join status=180`，超时自动恢复 `status=0`。
+- QBKG25LM：按官方方式进入蓝灯快速闪烁组网状态后，Coordinator 收到 `Device announce short=0x56fc`。D1 未显示预期的蓝灯慢闪两次，但设备公告是本次入网的协议栈证据。
+- 资源观测：Zigbee恢复时 free heap约218.9 KiB、minimum约216.7 KiB、largest block约196 KiB；Permit Join及设备公告期间 minimum约191.2 KiB，系统和 Web 保持运行。任务 HWM仍未采集，因此不能据此声称长期内存余量充足。
+- 当前只证明 Stage 2 加入网络；端点、Cluster、型号读取、三路物理映射和控制仍为 `NOT TESTED`，必须由 Stage 3/4继续验证。
