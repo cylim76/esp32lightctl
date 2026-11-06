@@ -500,8 +500,20 @@ static esp_err_t status_get(httpd_req_t *req)
             cJSON_AddItemToArray(discovered, cJSON_CreateNumber(devices[i].discovered_endpoints[ep]));
         }
         cJSON *onoff = cJSON_AddArrayToObject(d, "onoff_server_endpoints");
+        cJSON *onoff_states = cJSON_AddArrayToObject(d, "onoff_endpoint_states");
         for (int ep = 0; ep < devices[i].onoff_endpoint_count; ++ep) {
-            cJSON_AddItemToArray(onoff, cJSON_CreateNumber(devices[i].onoff_endpoints[ep]));
+            uint8_t endpoint = devices[i].onoff_endpoints[ep];
+            cJSON_AddItemToArray(onoff, cJSON_CreateNumber(endpoint));
+            zb_channel_status_t endpoint_status = {0};
+            zigbee_manager_get_endpoint_status(devices[i].short_addr, endpoint, &endpoint_status);
+            cJSON *endpoint_json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(endpoint_json, "endpoint", endpoint);
+            cJSON_AddNumberToObject(endpoint_json, "state", endpoint_status.state);
+            cJSON_AddBoolToObject(endpoint_json, "valid", endpoint_status.valid);
+            cJSON_AddBoolToObject(endpoint_json, "read_pending", endpoint_status.read_pending);
+            cJSON_AddBoolToObject(endpoint_json, "read_timed_out", endpoint_status.read_timed_out);
+            cJSON_AddNumberToObject(endpoint_json, "updated_uptime_ms", endpoint_status.updated_us / 1000);
+            cJSON_AddItemToArray(onoff_states, endpoint_json);
         }
         cJSON_AddItemToArray(array, d);
     }
@@ -969,6 +981,24 @@ static esp_err_t pair_post(httpd_req_t *req)
     esp_err_t err = zigbee_manager_permit_join(value);
     return err == ESP_OK ? httpd_resp_sendstr(req, "{\"ok\":true}") : send_json_error(req, "503 Service Unavailable", esp_err_to_name(err));
 }
+
+static esp_err_t zigbee_diagnostic_read_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *j = receive_json(req);
+    cJSON *addr = j ? cJSON_GetObjectItem(j, "short") : NULL;
+    if (!cJSON_IsNumber(addr) || addr->valuedouble != addr->valueint ||
+        addr->valueint < 0 || addr->valueint > UINT16_MAX) {
+        cJSON_Delete(j);
+        return send_json_error(req, "400 Bad Request", "valid short address is required");
+    }
+    uint16_t short_addr = (uint16_t)addr->valueint;
+    cJSON_Delete(j);
+    esp_err_t err = zigbee_manager_diagnostic_read(short_addr);
+    return err == ESP_OK ? httpd_resp_sendstr(req,
+        "{\"ok\":true,\"message\":\"Read-only endpoint refresh submitted; no ON/OFF command was sent\"}") :
+        send_json_error(req, "409 Conflict", esp_err_to_name(err));
+}
 #endif
 
 #if LIGHTGW_HAS_IR
@@ -1200,6 +1230,7 @@ esp_err_t web_server_start(void)
         {.uri = "/api/extensions/rainmaker/map", .method = HTTP_POST, .handler = rainmaker_mapping_post},
 #if LIGHTGW_HAS_ZIGBEE
         {.uri = "/api/pair", .method = HTTP_POST, .handler = pair_post},
+        {.uri = "/api/zigbee/diagnostic-read", .method = HTTP_POST, .handler = zigbee_diagnostic_read_post},
 #endif
 #if LIGHTGW_HAS_CONTROL
         {.uri = "/api/mapping", .method = HTTP_POST, .handler = mapping_post},

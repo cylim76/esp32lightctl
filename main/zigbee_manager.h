@@ -45,8 +45,11 @@ uint8_t zigbee_manager_channel(void);
 uint16_t zigbee_manager_pan_id(void);
 int zigbee_manager_pairing_remaining(void);
 esp_err_t zigbee_manager_permit_join(uint8_t seconds);
+esp_err_t zigbee_manager_diagnostic_read(uint16_t short_addr);
 esp_err_t zigbee_manager_set_channel(uint16_t short_addr, unsigned channel, bool on);
 esp_err_t zigbee_manager_confirm_mapping(uint16_t short_addr, const uint8_t endpoints[3]);
 size_t zigbee_manager_snapshot(zb_device_snapshot_t *out, size_t capacity);
 esp_err_t zigbee_manager_get_channel_status(uint16_t short_addr, unsigned channel,
                                             zb_channel_status_t *status);
+esp_err_t zigbee_manager_get_endpoint_status(uint16_t short_addr, uint8_t endpoint,
+                                             zb_channel_status_t *status);

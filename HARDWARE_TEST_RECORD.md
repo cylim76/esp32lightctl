@@ -21,9 +21,11 @@
 | HW-102 | 2 | Permit Join 180 秒 | PASS | 2026-11-06 / Stage 2 | 串口记录请求、status=180，并在超时后自动 status=0 |
 | HW-103 | 2 | Wi-Fi/Zigbee 单芯片 RF 共存 | PASS | 2026-11-06 / Stage 2 | Wi-Fi 信道6、Zigbee信道15并行运行；保持 Web 可用并完成一次 D1 入网；长时压力仍未测试 |
 | HW-201 | 3 | QBKG25LM 加入网络 | PASS | 2026-11-06 / Stage 2 | 180秒窗口内收到 Device announce，短地址 0x56FC；端点发现尚未执行 |
-| HW-202 | 3 | Active Endpoint 记录 | NOT TESTED | — | 不预设 1/2/3 |
-| HW-203 | 3 | 输入/输出 Cluster 记录 | NOT TESTED | — | 不预设 state_left 等上层名 |
-| HW-204 | 3 | 左/中/右实际端点映射 | NOT TESTED | — | 控制保持锁定 |
+| HW-202 | 3 | Active Endpoint 记录 | PASS | 2026-11-06 / Stage 3 | 0x56FC 实测端点 1、2、3、242；242 描述符失败不影响三路 On/Off |
+| HW-203 | 3 | 输入/输出 Cluster 记录 | PASS | 2026-11-06 / Stage 3 | ep1/2/3 均实测输入 Cluster 0x0006；未使用 Zigbee2MQTT 上层属性名代替底层端点 |
+| HW-204 | 3 | 左路实际端点映射 | PASS | 2026-11-06 / Stage 3 | 实体左键 OFF 后只读回读 ep1=OFF，恢复后 ep1=ON |
+| HW-205 | 3 | 中路实际端点映射 | PASS | 2026-11-06 / Stage 3 | 实体中键 OFF 后只读回读 ep2=OFF，恢复后 ep2=ON |
+| HW-206 | 3 | 右路实际端点映射 | NOT TESTED | 2026-11-06 / Stage 3 | 三端点排除法候选为 ep3，但右路 OFF 回读超时，禁止记录为硬件 PASS |
 | HW-301 | 4 | 三路独立 ON/OFF | NOT TESTED | — | 映射确认后执行 |
 | HW-302 | 4 | 实体按键状态反馈 | NOT TESTED | — | 等待硬件 |
 | HW-303 | 4 | 全部关闭 | NOT TESTED | — | 等待硬件 |
@@ -93,3 +95,22 @@
 - QBKG25LM：按官方方式进入蓝灯快速闪烁组网状态后，Coordinator 收到 `Device announce short=0x56fc`。D1 未显示预期的蓝灯慢闪两次，但设备公告是本次入网的协议栈证据。
 - 资源观测：Zigbee恢复时 free heap约218.9 KiB、minimum约216.7 KiB、largest block约196 KiB；Permit Join及设备公告期间 minimum约191.2 KiB，系统和 Web 保持运行。任务 HWM仍未采集，因此不能据此声称长期内存余量充足。
 - 当前只证明 Stage 2 加入网络；端点、Cluster、型号读取、三路物理映射和控制仍为 `NOT TESTED`，必须由 Stage 3/4继续验证。
+
+## 2026-11-06 Stage 3 端点诊断实机记录
+
+- 实机所刷 `build-stage3/esp32c6_light_gateway.bin` SHA-256：`643cbffd69f92fa7a7220afc85b491d50139a8b4b5a94c71f835432ce46ad7a2`；刷写未覆盖 NVS/`zb_storage`，PAN `0xDD9F`、信道15及设备短地址 `0x56FC` 均保留。
+- 型号读取确认 `QBKG25LM`。Active Endpoint 实测为 `1、2、3、242`；端点1/2/3均提供 HA profile `0x0104`、On/Off server Cluster `0x0006`，端点242的 Simple Descriptor 失败不影响三路诊断。
+- 增加管理员认证的只读端点刷新。串口明确记录 `no control command`；接口只发送 Read Attributes，不发送 ON/OFF。基线实测 `ep1=ON、ep2=ON、ep3=ON`。
+- 左路：实体关闭后回读 `ep1=OFF、ep2=ON、ep3=ON`，再次按键恢复后回读 `ep1=ON`，确认左路=`ep1`。
+- 中路：实体关闭后回读 `ep2=OFF`，再次按键恢复后回读 `ep2=ON`，确认中路=`ep2`。
+- 右路：根据唯一剩余端点候选为 `ep3`，但右路测试期间属性回读未返回，故保持 `NOT TESTED`，不能用排除法冒充硬件确认。
+- Zigbee RSSI 约 `-75` 至 `-82 dBm`，出现部分属性响应丢失/超时。正式 Stage 4 控制前应改善网关位置或距离，并再次直接验证右路 OFF/ON。
+- 实测发现并修复重复 Device Announce 引发的并发发现：同一短地址只允许一组发现，失败或空结果不得覆盖有效端点；网络恢复后自动重发现已保存但未确认映射的设备。
+- 办公时间实体测试必须每一路按两次恢复原状态；首次按键与恢复按键之间只执行只读刷新。测试前确认不会影响在场人员，长时间测试安排在下班后。
+
+## 2026-11-06 Stage 4 首次启动记录
+
+- 实机所刷 `build-stage4/esp32c6_light_gateway.bin` SHA-256：`f21a4d59c8287210cc748b46a1abb61df958dff9ecd9397732b42378956374bd`；未执行 `erase-flash`，保留 NVS 与 Zigbee 分区。
+- 启动确认应用版本 `0.11.0-stage4`、8 MiB Flash、Wi-Fi 配置及 DHCP 地址 `192.168.1.197` 均正常恢复；NTP 再次同步成功。
+- Coordinator 恢复 PAN `0xDD9F`、信道15，并读取到已保存的未确认设备 `0x56FC`。启动时的自动端点重发现因设备未应答而超时，不覆盖此前保存的有效端点诊断数据。
+- 本次只验证 Stage 4 安全升级与启动恢复，没有保存三路映射，也没有发送 ON/OFF；`HW-301`～`HW-309` 继续保持 `NOT TESTED`。
