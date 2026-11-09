@@ -10,7 +10,6 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
-#include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -94,13 +93,9 @@ static esp_err_t start_provision_ap(void)
     uint8_t mac[6];
     ESP_RETURN_ON_ERROR(esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP), TAG, "read MAC");
     snprintf(s_ap_ssid, sizeof(s_ap_ssid), APP_PROVISION_AP_PREFIX "%02X%02X%02X", mac[3], mac[4], mac[5]);
-    /* A temporary per-boot WPA2 password is printed only on USB serial. Ten
-       random decimal digits are easier to enter on a phone while retaining
-       roughly 33 bits of entropy and exceeding WPA2's eight-character floor. */
-    for (size_t i = 0; i < APP_PROVISION_PASSWORD_DIGITS; ++i) {
-        s_ap_password[i] = (char)('0' + (esp_random() % 10));
-    }
-    s_ap_password[APP_PROVISION_PASSWORD_DIGITS] = '\0';
+    /* The provisioning AP is temporary and closes after Wi-Fi is configured.
+       Keep this deployment password in one build-time constant. */
+    strlcpy(s_ap_password, APP_PROVISION_AP_PASSWORD, sizeof(s_ap_password));
     wifi_config_t ap = {0};
     strlcpy((char *)ap.ap.ssid, s_ap_ssid, sizeof(ap.ap.ssid));
     strlcpy((char *)ap.ap.password, s_ap_password, sizeof(ap.ap.password));
@@ -111,7 +106,7 @@ static esp_err_t start_provision_ap(void)
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_AP), TAG, "set AP mode");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap), TAG, "set AP config");
     s_provisioning = true;
-    ESP_LOGW(TAG, "Provisioning AP '%s' started; one-time password: %s", s_ap_ssid, s_ap_password);
+    ESP_LOGW(TAG, "Provisioning AP '%s' started; password: %s", s_ap_ssid, s_ap_password);
     return ESP_OK;
 }
 

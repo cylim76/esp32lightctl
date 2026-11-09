@@ -23,7 +23,8 @@ assert 'vTaskDelay(1)' in password
 assert 'yield_interval' in password
 assert 'auth_iter' in settings
 assert 'Administrator hash migrated' in settings
-assert "'0' + (esp_random() % 10)" in wifi
-assert 'APP_PROVISION_PASSWORD_DIGITS 10' in config
+assert 'APP_PROVISION_AP_PASSWORD     "admin123"' in config
+assert 'strlcpy(s_ap_password, APP_PROVISION_AP_PASSWORD' in wifi
+assert "esp_random" not in wifi
 
 print("AUTH_CONTRACT_TEST PASS")

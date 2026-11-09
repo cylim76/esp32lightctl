@@ -203,27 +203,39 @@ static void poll_persisted_devices(void)
 }
 
 #if LIGHTGW_HAS_CONTROL
-static void configure_aqara(uint16_t addr, const uint8_t eps[3])
+static void state_poll_task(void *arg)
 {
-    uint8_t mode = 1;
-    esp_zb_zcl_attribute_t attr = {
-        .id = AQARA_ATTR_MODE,
-        .data = {.type = ESP_ZB_ZCL_ATTR_TYPE_U8, .size = sizeof(mode), .value = &mode},
-    };
-    esp_zb_zcl_write_attr_cmd_t write = {0};
-    write.zcl_basic_cmd.dst_addr_u.addr_short = addr;
-    write.zcl_basic_cmd.dst_endpoint = 1;
-    write.zcl_basic_cmd.src_endpoint = APP_GATEWAY_ENDPOINT;
-    write.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-    write.clusterID = AQARA_CLUSTER_LUMI;
-    write.manuf_specific = 1;
-    write.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV;
-    write.dis_default_resp = 1;
-    write.manuf_code = AQARA_MANUFACTURER_CODE;
-    write.attr_number = 1;
-    write.attr_field = &attr;
-    esp_zb_zcl_write_attr_cmd_req(&write);
+    (void)arg;
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(APP_ZIGBEE_STATE_POLL_MS));
+        if (!s_network_ready) continue;
 
+        struct { uint16_t addr; uint8_t eps[3]; } pending[APP_MAX_ZIGBEE_DEVICES];
+        size_t count = 0;
+        xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+        for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
+            if (!s_devices[i].used || !s_devices[i].supported ||
+                !s_devices[i].mapping_confirmed) continue;
+            pending[count].addr = s_devices[i].short_addr;
+            memcpy(pending[count].eps, s_devices[i].endpoints,
+                   sizeof(pending[count].eps));
+            count++;
+        }
+        xSemaphoreGive(s_devices_lock);
+
+        if (!count) continue;
+        esp_zb_lock_acquire(portMAX_DELAY);
+        for (size_t i = 0; i < count; ++i) {
+            read_all_states(pending[i].addr, pending[i].eps);
+        }
+        esp_zb_lock_release();
+    }
+}
+#endif
+
+#if LIGHTGW_HAS_CONTROL
+static void configure_onoff_reporting(uint16_t addr, const uint8_t eps[3])
+{
     bool change = false;
     for (int i = 0; i < 3; ++i) {
         esp_zb_zcl_config_report_record_t record = {
@@ -303,25 +315,40 @@ static void simple_desc_cb(esp_zb_zdp_status_t status, esp_zb_af_simple_desc_1_1
     request_next_simple_desc(ctx);
 }
 
+static bool merge_endpoint(uint8_t *endpoints, uint8_t *count, uint8_t endpoint)
+{
+    for (uint8_t i = 0; i < *count; ++i) {
+        if (endpoints[i] == endpoint) return false;
+    }
+    if (*count >= APP_MAX_ZIGBEE_ENDPOINTS) return false;
+    endpoints[(*count)++] = endpoint;
+    return true;
+}
+
 static void finish_discovery(discovery_ctx_t *ctx)
 {
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_or_add_device(ctx->short_addr, ctx->ieee);
     if (idx >= 0) {
-        if (ctx->onoff_count > 0) {
-            s_devices[idx].mapping_confirmed = false;
-            memset(s_devices[idx].endpoints, 0, sizeof(s_devices[idx].endpoints));
-            s_devices[idx].discovered_endpoint_count = ctx->ep_count;
-            memcpy(s_devices[idx].discovered_endpoints, ctx->eps, ctx->ep_count);
-            s_devices[idx].onoff_endpoint_count = ctx->onoff_count;
-            memcpy(s_devices[idx].onoff_endpoints, ctx->onoff_eps, ctx->onoff_count);
-            for (uint8_t i = 0; i < ctx->onoff_count; ++i) {
-                zb_state_cache_register_endpoint(&s_state_cache, ctx->ieee, ctx->short_addr, ctx->onoff_eps[i]);
-            }
-            save_devices();
-        } else {
+        zb_device_snapshot_t *device = &s_devices[idx];
+        bool changed = false;
+        for (uint8_t i = 0; i < ctx->ep_count; ++i) {
+            changed |= merge_endpoint(device->discovered_endpoints,
+                                      &device->discovered_endpoint_count, ctx->eps[i]);
+        }
+        for (uint8_t i = 0; i < ctx->onoff_count; ++i) {
+            changed |= merge_endpoint(device->onoff_endpoints,
+                                      &device->onoff_endpoint_count, ctx->onoff_eps[i]);
+            zb_state_cache_register_endpoint(&s_state_cache, ctx->ieee, ctx->short_addr,
+                                             ctx->onoff_eps[i]);
+        }
+        if (changed) save_devices();
+        if (ctx->onoff_count == 0) {
             ESP_LOGW(TAG, "DIAG empty discovery ignored for 0x%04x; previous valid endpoints preserved",
                      ctx->short_addr);
+        } else if (ctx->onoff_count < device->onoff_endpoint_count) {
+            ESP_LOGW(TAG, "DIAG partial discovery merged for 0x%04x new=%u retained_total=%u",
+                     ctx->short_addr, ctx->onoff_count, device->onoff_endpoint_count);
         }
     }
     xSemaphoreGive(s_devices_lock);
@@ -570,7 +597,15 @@ esp_err_t zigbee_manager_start(void)
     ESP_RETURN_ON_ERROR(esp_zb_platform_config(&platform), TAG, "Zigbee platform config");
     esp_coex_wifi_i154_enable();
     diagnostics_record_memory_event("zigbee_starting");
-    return xTaskCreate(zigbee_task, "zigbee_main", 8192, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+    if (xTaskCreate(zigbee_task, "zigbee_main", 8192, NULL, 5, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+#if LIGHTGW_HAS_CONTROL
+    if (xTaskCreate(state_poll_task, "zigbee_poll", 3072, NULL, 4, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+#endif
+    return ESP_OK;
 }
 
 bool zigbee_manager_network_ready(void) { return s_network_ready; }
@@ -663,7 +698,7 @@ esp_err_t zigbee_manager_confirm_mapping(uint16_t short_addr, const uint8_t endp
     xSemaphoreGive(s_devices_lock);
     if (!valid) return ESP_ERR_INVALID_ARG;
     esp_zb_lock_acquire(portMAX_DELAY);
-    configure_aqara(short_addr, endpoints);
+    configure_onoff_reporting(short_addr, endpoints);
     esp_zb_lock_release();
     ESP_LOGW(TAG, "Physical mapping confirmed short=0x%04x left=%u center=%u right=%u",
              short_addr, endpoints[0], endpoints[1], endpoints[2]);
