@@ -20,10 +20,14 @@ typedef struct {
     uint8_t endpoint;
     zb_cache_value_t value;
     bool valid;
+    zb_cache_value_t last_known_value;
+    bool last_known_valid;
     bool read_pending;
     bool read_timed_out;
+    uint16_t consecutive_failures;
     uint32_t pairing_generation;
     int64_t updated_ms;
+    int64_t last_known_updated_ms;
     int64_t read_deadline_ms;
 } zb_state_cache_entry_t;
 

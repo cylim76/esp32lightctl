@@ -21,7 +21,7 @@ assert 'diagnostics_set_error(TAG, "failed to start Zigbee initialization")' in 
 diag_start = source.index("esp_err_t zigbee_manager_diagnostic_read")
 diag_end = source.index("esp_err_t zigbee_manager_confirm_mapping", diag_start)
 diag_body = source[diag_start:diag_end]
-assert "send_read(" in diag_body
+assert "queue_read(" in diag_body
 assert "esp_zb_zcl_on_off_cmd_req" not in diag_body
 assert "zigbee_manager_diagnostic_read" in header
 assert '"/api/zigbee/diagnostic-read"' in web
@@ -32,7 +32,9 @@ assert "stage>=3&&(d.onoff_server_endpoints||[]).length" in page
 assert "const names=['出口','企划','会议室']" in page
 assert "scheduleTargets=['出口照明','企划照明','会议室照明'" in page
 assert ".switches{grid-template-columns:repeat(3,minmax(0,1fr))" in page
-assert "b.textContent=`${n}：${state(d.states[i])}`" in page
+assert "on.textContent='开'" in page and "off.textContent='关'" in page
+assert "on.onclick=()=>setSwitch(d.short,i,true)" in page
+assert "off.onclick=()=>setSwitch(d.short,i,false)" in page
 assert "`${names[channel]}${on?'开启':'关闭'}`" in page
 assert 'id="scheduleTargetTabs"' in page
 assert "function activateScheduleTarget(target)" in page
@@ -42,10 +44,15 @@ assert "定时任务只发送明确的 OFF" in page
 assert 'id="operationLux"' in page and 'id="operationClimate"' in page
 assert 'id="zigbeePairActions"' in page
 assert "开放 Zigbee 配对 180 秒" in page
-assert "全部关灯" in page and "也不控制空调" in page
-assert "确认关闭所有已映射的 Aqara D1 照明回路" in page
+assert ">全部关闭</button>" in page
+assert "确认执行全部关闭？" in page
+assert "全部关灯" not in page and "也不控制空调" not in page
+assert "Aqara 智能开关 D1" in page
+assert "映射：${d.mapping_confirmed" not in page
 assert "APP_ZIGBEE_STATE_POLL_MS" in source
-assert 'xTaskCreate(state_poll_task, "zigbee_poll"' in source
+assert 'xTaskCreate(zigbee_io_task, "zigbee_io"' in source
+assert "APP_ZIGBEE_READ_STAGGER_MS" in source
+assert "APP_ZIGBEE_CONTROL_MAX_ATTEMPTS" in source
 assert "static bool begin_discovery" in source
 assert "static void end_discovery" in source
 assert "duplicate announce ignored" in source
@@ -62,7 +69,8 @@ assert "rediscover persisted unmapped device" in source
 mapping_start = source.index("esp_err_t zigbee_manager_confirm_mapping")
 mapping_end = source.index("esp_err_t zigbee_manager_set_channel", mapping_start)
 mapping_body = source[mapping_start:mapping_end]
-assert "configure_onoff_reporting" in mapping_body
+assert "ZIGBEE_IO_CONFIG_REPORT" in mapping_body
+assert "queue_all_states" in mapping_body
 assert "esp_zb_zcl_write_attr_cmd_req" not in source
 restored = source.index('ESP_LOGI(TAG, "Restored Zigbee network')
 poll = source.index("poll_persisted_devices();", restored)

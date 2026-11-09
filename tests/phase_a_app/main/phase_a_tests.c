@@ -142,6 +142,24 @@ static void test_read_timeout_rejects_old_off(void)
     CHECK(!state.valid && !state.read_pending && state.read_timed_out);
 }
 
+static void test_read_timeout_preserves_diagnostic_last_known_only(void)
+{
+    zb_state_cache_init(&cache, 1000, 100);
+    zb_state_cache_device_announced(&cache, IEEE_A, 0x1111, 0);
+    CHECK(zb_state_cache_register_endpoint(&cache, IEEE_A, 0x1111, 3));
+    CHECK(zb_state_cache_update(&cache, 0x1111, 3, ZB_CACHE_OFF, 10));
+    CHECK(zb_state_cache_begin_read(&cache, 0x1111, 3, 20));
+    zb_state_cache_entry_t state;
+    CHECK(zb_state_cache_get(&cache, 0x1111, 3, 121, &state));
+    CHECK(!state.valid && state.value == ZB_CACHE_UNKNOWN);
+    CHECK(state.last_known_valid && state.last_known_value == ZB_CACHE_OFF);
+    CHECK(state.last_known_updated_ms == 10 && state.consecutive_failures == 1);
+    CHECK(zb_state_cache_update(&cache, 0x1111, 3, ZB_CACHE_ON, 130));
+    CHECK(zb_state_cache_get(&cache, 0x1111, 3, 131, &state));
+    CHECK(state.valid && state.last_known_value == ZB_CACHE_ON &&
+          state.consecutive_failures == 0 && !state.read_timed_out);
+}
+
 static void test_repair_invalidates_generation(void)
 {
     zb_state_cache_init(&cache, 1000, 100);
@@ -408,6 +426,7 @@ void app_main(void)
     RUN(test_multi_device_isolation);
     RUN(test_expired_off_is_invalid);
     RUN(test_read_timeout_rejects_old_off);
+    RUN(test_read_timeout_preserves_diagnostic_last_known_only);
     RUN(test_repair_invalidates_generation);
     RUN(test_fresh_feedback_after_timeout_recovers);
     RUN(test_short_address_reuse_isolated);

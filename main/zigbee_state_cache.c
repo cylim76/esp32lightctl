@@ -47,15 +47,22 @@ void zb_state_cache_device_announced(zb_state_cache_t *cache, const uint8_t ieee
             entry->pairing_generation = generation;
             entry->valid = false;
             entry->value = ZB_CACHE_UNKNOWN;
+            entry->last_known_valid = false;
+            entry->last_known_value = ZB_CACHE_UNKNOWN;
             entry->read_pending = false;
             entry->read_timed_out = false;
+            entry->consecutive_failures = 0;
             entry->updated_ms = 0;
+            entry->last_known_updated_ms = 0;
         } else if (entry->short_addr == short_addr) {
             /* A reused network address must never expose another device's cached state. */
             entry->valid = false;
             entry->value = ZB_CACHE_UNKNOWN;
+            entry->last_known_valid = false;
+            entry->last_known_value = ZB_CACHE_UNKNOWN;
             entry->read_pending = false;
             entry->read_timed_out = false;
+            entry->consecutive_failures = 0;
             entry->short_addr = UINT16_MAX;
         }
     }
@@ -81,15 +88,21 @@ bool zb_state_cache_register_endpoint(zb_state_cache_t *cache, const uint8_t iee
     }
     if (!entry) entry = find_free(cache);
     if (!entry) return false;
-    if (!entry->used) memset(entry, 0, sizeof(*entry));
+    bool newly_registered = !entry->used;
+    if (newly_registered) memset(entry, 0, sizeof(*entry));
     entry->used = true;
     memcpy(entry->ieee, ieee, 8);
     entry->short_addr = short_addr;
     entry->endpoint = endpoint;
-    entry->value = ZB_CACHE_UNKNOWN;
-    entry->valid = false;
-    entry->read_pending = false;
-    entry->read_timed_out = false;
+    if (newly_registered) {
+        entry->value = ZB_CACHE_UNKNOWN;
+        entry->valid = false;
+        entry->last_known_value = ZB_CACHE_UNKNOWN;
+        entry->last_known_valid = false;
+        entry->read_pending = false;
+        entry->read_timed_out = false;
+        entry->consecutive_failures = 0;
+    }
     if (!entry->pairing_generation) entry->pairing_generation = cache->next_generation;
     return true;
 }
@@ -115,9 +128,13 @@ bool zb_state_cache_update(zb_state_cache_t *cache, uint16_t short_addr, uint8_t
     if (!entry || (value != ZB_CACHE_OFF && value != ZB_CACHE_ON)) return false;
     entry->value = value;
     entry->valid = true;
+    entry->last_known_value = value;
+    entry->last_known_valid = true;
     entry->updated_ms = now_ms;
+    entry->last_known_updated_ms = now_ms;
     entry->read_pending = false;
     entry->read_timed_out = false;
+    entry->consecutive_failures = 0;
     entry->read_deadline_ms = 0;
     return true;
 }
@@ -130,6 +147,7 @@ bool zb_state_cache_get(zb_state_cache_t *cache, uint16_t short_addr, uint8_t en
     if (entry->read_pending && now_ms >= entry->read_deadline_ms) {
         entry->read_pending = false;
         entry->read_timed_out = true;
+        if (entry->consecutive_failures < UINT16_MAX) entry->consecutive_failures++;
         entry->valid = false;
         entry->value = ZB_CACHE_UNKNOWN;
     }
@@ -150,9 +168,13 @@ void zb_state_cache_invalidate_device(zb_state_cache_t *cache, const uint8_t iee
         if (entry->used && same_ieee(entry->ieee, ieee)) {
             entry->valid = false;
             entry->value = ZB_CACHE_UNKNOWN;
+            entry->last_known_valid = false;
+            entry->last_known_value = ZB_CACHE_UNKNOWN;
             entry->read_pending = false;
             entry->read_timed_out = false;
+            entry->consecutive_failures = 0;
             entry->updated_ms = 0;
+            entry->last_known_updated_ms = 0;
         }
     }
 }

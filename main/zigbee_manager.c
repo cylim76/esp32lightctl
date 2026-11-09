@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
@@ -25,6 +26,32 @@ static bool s_device_storage_healthy = true;
 static bool s_network_ready;
 static int64_t s_pairing_until_us;
 static zb_state_cache_t s_state_cache;
+static int64_t s_last_seen_ms[APP_MAX_ZIGBEE_DEVICES];
+static uint32_t s_control_generation[APP_MAX_ZIGBEE_DEVICES][3];
+static QueueHandle_t s_zigbee_io_queue;
+
+#define ZIGBEE_IO_QUEUE_DEPTH 48
+#define ZIGBEE_IO_PENDING_CAPACITY 64
+
+typedef enum {
+    ZIGBEE_IO_READ,
+    ZIGBEE_IO_CONTROL,
+    ZIGBEE_IO_CONFIG_REPORT,
+} zigbee_io_type_t;
+
+typedef struct {
+    zigbee_io_type_t type;
+    uint16_t short_addr;
+    uint8_t endpoint;
+    uint16_t cluster;
+    uint16_t attribute;
+    bool requested_on;
+    uint8_t attempt;
+    uint32_t control_generation;
+    int64_t origin_ms;
+    int64_t due_ms;
+} zigbee_io_operation_t;
+static zigbee_io_operation_t s_pending_operations[ZIGBEE_IO_PENDING_CAPACITY];
 #if LIGHTGW_HAS_DISCOVERY
 static uint16_t s_discovery_in_progress[APP_MAX_ZIGBEE_DEVICES];
 #endif
@@ -69,6 +96,8 @@ static void save_devices(void)
 static void load_devices(void)
 {
     s_device_storage_healthy = true;
+    memset(s_last_seen_ms, 0, sizeof(s_last_seen_ms));
+    memset(s_control_generation, 0, sizeof(s_control_generation));
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
         s_devices[i].state[0] = s_devices[i].state[1] = s_devices[i].state[2] = ZB_CHANNEL_UNKNOWN;
     }
@@ -145,7 +174,7 @@ static int find_or_add_device(uint16_t short_addr, const esp_zb_ieee_addr_t ieee
 }
 #endif
 
-static void send_read(uint16_t addr, uint8_t endpoint, uint16_t cluster, uint16_t attr)
+static uint8_t send_read(uint16_t addr, uint8_t endpoint, uint16_t cluster, uint16_t attr)
 {
     esp_zb_zcl_read_attr_cmd_t req = {0};
     req.zcl_basic_cmd.dst_addr_u.addr_short = addr;
@@ -155,16 +184,44 @@ static void send_read(uint16_t addr, uint8_t endpoint, uint16_t cluster, uint16_
     req.clusterID = cluster;
     req.attr_number = 1;
     req.attr_field = &attr;
-    esp_zb_zcl_read_attr_cmd_req(&req);
+    uint8_t tsn = esp_zb_zcl_read_attr_cmd_req(&req);
+    ESP_LOGI(TAG, "ZCL read TX tsn=%u short=0x%04x endpoint=%u cluster=0x%04x attr=0x%04x",
+             tsn, addr, endpoint, cluster, attr);
+    return tsn;
 }
 
-static void read_all_states(uint16_t addr, const uint8_t eps[3])
+static bool queue_operation(const zigbee_io_operation_t *operation)
 {
+    if (!s_zigbee_io_queue || !operation || xQueueSend(s_zigbee_io_queue, operation, 0) != pdTRUE) {
+        diagnostics_set_error(TAG, "Zigbee I/O queue full");
+        return false;
+    }
+    return true;
+}
+
+static bool queue_read(uint16_t addr, uint8_t endpoint, uint16_t cluster, uint16_t attr,
+                       int64_t due_ms)
+{
+    zigbee_io_operation_t operation = {
+        .type = ZIGBEE_IO_READ,
+        .short_addr = addr,
+        .endpoint = endpoint,
+        .cluster = cluster,
+        .attribute = attr,
+        .origin_ms = now_ms(),
+        .due_ms = due_ms,
+    };
+    return queue_operation(&operation);
+}
+
+static void queue_all_states(uint16_t addr, const uint8_t eps[3], int64_t first_due_ms)
+{
+    unsigned queued = 0;
     for (int i = 0; i < 3; ++i) if (eps[i]) {
-        xSemaphoreTake(s_devices_lock, portMAX_DELAY);
-        zb_state_cache_begin_read(&s_state_cache, addr, eps[i], now_ms());
-        xSemaphoreGive(s_devices_lock);
-        send_read(addr, eps[i], ESP_ZB_ZCL_CLUSTER_ID_ON_OFF, ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+        queue_read(addr, eps[i], ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+                   ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+                   first_due_ms + (int64_t)queued * APP_ZIGBEE_READ_STAGGER_MS);
+        queued++;
     }
 }
 
@@ -192,7 +249,21 @@ static void poll_persisted_devices(void)
         }
     }
     xSemaphoreGive(s_devices_lock);
-    for (size_t i = 0; i < count; ++i) read_all_states(pending[i].addr, pending[i].eps);
+    int64_t due_ms = now_ms() + APP_ZIGBEE_RECOVERY_DELAY_MS;
+    for (size_t i = 0; i < count; ++i) {
+        for (int ep = 0; ep < 3; ++ep) if (pending[i].eps[ep]) {
+            zigbee_io_operation_t config = {
+                .type = ZIGBEE_IO_CONFIG_REPORT,
+                .short_addr = pending[i].addr,
+                .endpoint = pending[i].eps[ep],
+                .due_ms = due_ms + (int64_t)ep * APP_ZIGBEE_READ_STAGGER_MS,
+            };
+            queue_operation(&config);
+        }
+        queue_all_states(pending[i].addr, pending[i].eps,
+                         due_ms + 3 * APP_ZIGBEE_READ_STAGGER_MS);
+        due_ms += 6 * APP_ZIGBEE_READ_STAGGER_MS;
+    }
 #if LIGHTGW_HAS_DISCOVERY
     for (size_t i = 0; i < rediscover_count; ++i) {
         ESP_LOGI(TAG, "DIAG rediscover persisted unmapped device 0x%04x after network restore",
@@ -202,63 +273,179 @@ static void poll_persisted_devices(void)
 #endif
 }
 
-#if LIGHTGW_HAS_CONTROL
-static void state_poll_task(void *arg)
-{
-    (void)arg;
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(APP_ZIGBEE_STATE_POLL_MS));
-        if (!s_network_ready) continue;
-
-        struct { uint16_t addr; uint8_t eps[3]; } pending[APP_MAX_ZIGBEE_DEVICES];
-        size_t count = 0;
-        xSemaphoreTake(s_devices_lock, portMAX_DELAY);
-        for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
-            if (!s_devices[i].used || !s_devices[i].supported ||
-                !s_devices[i].mapping_confirmed) continue;
-            pending[count].addr = s_devices[i].short_addr;
-            memcpy(pending[count].eps, s_devices[i].endpoints,
-                   sizeof(pending[count].eps));
-            count++;
-        }
-        xSemaphoreGive(s_devices_lock);
-
-        if (!count) continue;
-        esp_zb_lock_acquire(portMAX_DELAY);
-        for (size_t i = 0; i < count; ++i) {
-            read_all_states(pending[i].addr, pending[i].eps);
-        }
-        esp_zb_lock_release();
-    }
-}
-#endif
-
-#if LIGHTGW_HAS_CONTROL
-static void configure_onoff_reporting(uint16_t addr, const uint8_t eps[3])
+static void send_config_report(uint16_t addr, uint8_t endpoint)
 {
     bool change = false;
-    for (int i = 0; i < 3; ++i) {
-        esp_zb_zcl_config_report_record_t record = {
-            .direction = ESP_ZB_ZCL_REPORT_DIRECTION_SEND,
-            .attributeID = ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-            .attrType = ESP_ZB_ZCL_ATTR_TYPE_BOOL,
-            .min_interval = 0,
-            .max_interval = 300,
-            .reportable_change = &change,
-        };
-        esp_zb_zcl_config_report_cmd_t report = {0};
-        report.zcl_basic_cmd.dst_addr_u.addr_short = addr;
-        report.zcl_basic_cmd.dst_endpoint = eps[i];
-        report.zcl_basic_cmd.src_endpoint = APP_GATEWAY_ENDPOINT;
-        report.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-        report.clusterID = ESP_ZB_ZCL_CLUSTER_ID_ON_OFF;
-        report.record_number = 1;
-        report.record_field = &record;
-        esp_zb_zcl_config_report_cmd_req(&report);
-    }
-    read_all_states(addr, eps);
+    esp_zb_zcl_config_report_record_t record = {
+        .direction = ESP_ZB_ZCL_REPORT_DIRECTION_SEND,
+        .attributeID = ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+        .attrType = ESP_ZB_ZCL_ATTR_TYPE_BOOL,
+        .min_interval = 1,
+        .max_interval = 300,
+        .reportable_change = &change,
+    };
+    esp_zb_zcl_config_report_cmd_t report = {0};
+    report.zcl_basic_cmd.dst_addr_u.addr_short = addr;
+    report.zcl_basic_cmd.dst_endpoint = endpoint;
+    report.zcl_basic_cmd.src_endpoint = APP_GATEWAY_ENDPOINT;
+    report.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    report.clusterID = ESP_ZB_ZCL_CLUSTER_ID_ON_OFF;
+    report.record_number = 1;
+    report.record_field = &record;
+    uint8_t tsn = esp_zb_zcl_config_report_cmd_req(&report);
+    ESP_LOGI(TAG, "ZCL reporting config TX tsn=%u short=0x%04x endpoint=%u", tsn, addr, endpoint);
 }
-#endif
+
+static bool control_already_confirmed(const zigbee_io_operation_t *operation)
+{
+    bool confirmed = false;
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    zb_state_cache_entry_t cached;
+    if (zb_state_cache_get(&s_state_cache, operation->short_addr, operation->endpoint,
+                           now_ms(), &cached) && cached.last_known_valid &&
+        cached.last_known_updated_ms >= operation->origin_ms &&
+        cached.last_known_value == (operation->requested_on ? ZB_CACHE_ON : ZB_CACHE_OFF)) {
+        confirmed = true;
+    }
+    xSemaphoreGive(s_devices_lock);
+    return confirmed;
+}
+
+static bool control_is_current(const zigbee_io_operation_t *operation)
+{
+    bool current = false;
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    int idx = find_device_by_short(operation->short_addr);
+    if (idx >= 0) {
+        for (int channel = 0; channel < 3; ++channel) {
+            if (s_devices[idx].endpoints[channel] == operation->endpoint &&
+                s_control_generation[idx][channel] == operation->control_generation) {
+                current = true;
+                break;
+            }
+        }
+    }
+    xSemaphoreGive(s_devices_lock);
+    return current;
+}
+
+static void execute_io_operation(const zigbee_io_operation_t *operation)
+{
+    if (!s_network_ready) return;
+    if (operation->type == ZIGBEE_IO_CONTROL && !control_is_current(operation)) {
+        ESP_LOGI(TAG, "Superseded control skipped short=0x%04x endpoint=%u generation=%lu",
+                 operation->short_addr, operation->endpoint,
+                 (unsigned long)operation->control_generation);
+        return;
+    }
+    if (operation->type == ZIGBEE_IO_CONTROL && operation->attempt > 0 &&
+        control_already_confirmed(operation)) {
+        ESP_LOGI(TAG, "Control retry skipped: fresh state already confirmed short=0x%04x endpoint=%u",
+                 operation->short_addr, operation->endpoint);
+        return;
+    }
+
+    if (operation->type == ZIGBEE_IO_READ) {
+        if (operation->cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF &&
+            operation->attribute == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID) {
+            xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+            zb_state_cache_begin_read(&s_state_cache, operation->short_addr, operation->endpoint, now_ms());
+            xSemaphoreGive(s_devices_lock);
+        }
+        esp_zb_lock_acquire(portMAX_DELAY);
+        send_read(operation->short_addr, operation->endpoint, operation->cluster, operation->attribute);
+        esp_zb_lock_release();
+        return;
+    }
+
+    if (operation->type == ZIGBEE_IO_CONFIG_REPORT) {
+        esp_zb_lock_acquire(portMAX_DELAY);
+        send_config_report(operation->short_addr, operation->endpoint);
+        esp_zb_lock_release();
+        return;
+    }
+
+    esp_zb_zcl_on_off_cmd_t command = {0};
+    command.zcl_basic_cmd.dst_addr_u.addr_short = operation->short_addr;
+    command.zcl_basic_cmd.dst_endpoint = operation->endpoint;
+    command.zcl_basic_cmd.src_endpoint = APP_GATEWAY_ENDPOINT;
+    command.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
+    command.on_off_cmd_id = operation->requested_on ? ESP_ZB_ZCL_CMD_ON_OFF_ON_ID : ESP_ZB_ZCL_CMD_ON_OFF_OFF_ID;
+    esp_zb_lock_acquire(portMAX_DELAY);
+    uint8_t tsn = esp_zb_zcl_on_off_cmd_req(&command);
+    esp_zb_lock_release();
+    ESP_LOGI(TAG, "Control TX tsn=%u short=0x%04x endpoint=%u value=%s attempt=%u/%u",
+             tsn, operation->short_addr, operation->endpoint,
+             operation->requested_on ? "ON" : "OFF", operation->attempt + 1,
+             APP_ZIGBEE_CONTROL_MAX_ATTEMPTS);
+
+    queue_read(operation->short_addr, operation->endpoint, ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+               ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+               now_ms() + APP_ZIGBEE_CONTROL_READ_DELAY_MS);
+    if (operation->attempt + 1 < APP_ZIGBEE_CONTROL_MAX_ATTEMPTS) {
+        zigbee_io_operation_t retry = *operation;
+        retry.attempt++;
+        retry.due_ms = retry.origin_ms + (retry.attempt == 1 ? APP_ZIGBEE_CONTROL_RETRY_1_MS :
+                                                               APP_ZIGBEE_CONTROL_RETRY_2_MS);
+        queue_operation(&retry);
+    }
+}
+
+static void queue_background_poll(void)
+{
+    struct { uint16_t addr; uint8_t eps[3]; } pending[APP_MAX_ZIGBEE_DEVICES];
+    size_t count = 0;
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
+        if (!s_devices[i].used || !s_devices[i].supported || !s_devices[i].mapping_confirmed) continue;
+        pending[count].addr = s_devices[i].short_addr;
+        memcpy(pending[count].eps, s_devices[i].endpoints, sizeof(pending[count].eps));
+        count++;
+    }
+    xSemaphoreGive(s_devices_lock);
+    int64_t due_ms = now_ms();
+    for (size_t i = 0; i < count; ++i) {
+        queue_all_states(pending[i].addr, pending[i].eps, due_ms);
+        due_ms += 3 * APP_ZIGBEE_READ_STAGGER_MS;
+    }
+}
+
+static void zigbee_io_task(void *arg)
+{
+    (void)arg;
+    size_t pending_count = 0;
+    int64_t next_poll_ms = now_ms() + APP_ZIGBEE_STATE_POLL_MS;
+    for (;;) {
+        zigbee_io_operation_t incoming;
+        while (pending_count < ZIGBEE_IO_PENDING_CAPACITY &&
+               xQueueReceive(s_zigbee_io_queue, &incoming, 0) == pdTRUE) {
+            s_pending_operations[pending_count++] = incoming;
+        }
+        int64_t now = now_ms();
+        if (s_network_ready && now >= next_poll_ms) {
+            queue_background_poll();
+            next_poll_ms = now + APP_ZIGBEE_STATE_POLL_MS;
+        }
+        size_t due_index = SIZE_MAX;
+        int64_t earliest = INT64_MAX;
+        for (size_t i = 0; i < pending_count; ++i) {
+            if (s_pending_operations[i].due_ms < earliest) {
+                earliest = s_pending_operations[i].due_ms;
+                due_index = i;
+            }
+        }
+        if (due_index != SIZE_MAX && earliest <= now) {
+            zigbee_io_operation_t operation = s_pending_operations[due_index];
+            s_pending_operations[due_index] = s_pending_operations[--pending_count];
+            execute_io_operation(&operation);
+            continue;
+        }
+        if (pending_count >= ZIGBEE_IO_PENDING_CAPACITY) {
+            ESP_LOGW(TAG, "Zigbee pending operation capacity reached");
+        }
+        vTaskDelay(pdMS_TO_TICKS(25));
+    }
+}
 
 #if LIGHTGW_HAS_DISCOVERY
 static void request_next_simple_desc(discovery_ctx_t *ctx);
@@ -327,6 +514,8 @@ static bool merge_endpoint(uint8_t *endpoints, uint8_t *count, uint8_t endpoint)
 
 static void finish_discovery(discovery_ctx_t *ctx)
 {
+    uint8_t mapped_endpoints[3] = {0};
+    bool mapping_was_confirmed = false;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_or_add_device(ctx->short_addr, ctx->ieee);
     if (idx >= 0) {
@@ -350,9 +539,26 @@ static void finish_discovery(discovery_ctx_t *ctx)
             ESP_LOGW(TAG, "DIAG partial discovery merged for 0x%04x new=%u retained_total=%u",
                      ctx->short_addr, ctx->onoff_count, device->onoff_endpoint_count);
         }
+        mapping_was_confirmed = device->mapping_confirmed;
+        if (mapping_was_confirmed) memcpy(mapped_endpoints, device->endpoints, sizeof(mapped_endpoints));
     }
     xSemaphoreGive(s_devices_lock);
-    send_read(ctx->short_addr, 1, ESP_ZB_ZCL_CLUSTER_ID_BASIC, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID);
+    if (mapping_was_confirmed) {
+        int64_t due_ms = now_ms() + 1000;
+        for (int ch = 0; ch < 3; ++ch) if (mapped_endpoints[ch]) {
+            zigbee_io_operation_t config = {
+                .type = ZIGBEE_IO_CONFIG_REPORT,
+                .short_addr = ctx->short_addr,
+                .endpoint = mapped_endpoints[ch],
+                .due_ms = due_ms + (int64_t)ch * APP_ZIGBEE_READ_STAGGER_MS,
+            };
+            queue_operation(&config);
+        }
+        queue_all_states(ctx->short_addr, mapped_endpoints,
+                         due_ms + 3 * APP_ZIGBEE_READ_STAGGER_MS);
+    }
+    queue_read(ctx->short_addr, 1, ESP_ZB_ZCL_CLUSTER_ID_BASIC,
+               ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, now_ms());
     diagnostics_record_memory_event("zigbee_discovery_done");
     end_discovery(ctx->short_addr);
     free(ctx);
@@ -422,7 +628,8 @@ static void update_onoff(uint16_t addr, uint8_t endpoint, bool on, int8_t rssi)
             mapped = true;
         }
         s_devices[idx].online = true;
-        s_devices[idx].last_rssi = rssi;
+        s_last_seen_ms[idx] = now_ms();
+        if (rssi != 0) s_devices[idx].last_rssi = rssi;
     }
     xSemaphoreGive(s_devices_lock);
     ESP_LOGI(TAG, "State feedback short=0x%04x endpoint=%u value=%s rssi=%d mapped=%s",
@@ -431,9 +638,20 @@ static void update_onoff(uint16_t addr, uint8_t endpoint, bool on, int8_t rssi)
 
 static void handle_read_response(const esp_zb_zcl_cmd_read_attr_resp_message_t *msg)
 {
-    if (!msg || msg->info.status != ESP_ZB_ZCL_STATUS_SUCCESS) return;
+    if (!msg) return;
+    if (msg->info.status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGW(TAG, "ZCL read response failed short=0x%04x endpoint=%u cluster=0x%04x status=0x%02x tsn=%u",
+                 msg->info.src_address.u.short_addr, msg->info.src_endpoint, msg->info.cluster,
+                 msg->info.status, msg->info.header.tsn);
+        return;
+    }
     for (esp_zb_zcl_read_attr_resp_variable_t *v = msg->variables; v; v = v->next) {
-        if (v->status != ESP_ZB_ZCL_STATUS_SUCCESS || !v->attribute.data.value) continue;
+        if (v->status != ESP_ZB_ZCL_STATUS_SUCCESS || !v->attribute.data.value) {
+            ESP_LOGW(TAG, "ZCL attribute read rejected short=0x%04x endpoint=%u cluster=0x%04x attr=0x%04x status=0x%02x",
+                     msg->info.src_address.u.short_addr, msg->info.src_endpoint, msg->info.cluster,
+                     v->attribute.id, v->status);
+            continue;
+        }
         if (msg->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF && v->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID) {
             update_onoff(msg->info.src_address.u.short_addr, msg->info.src_endpoint,
                          *(uint8_t *)v->attribute.data.value != 0, msg->info.header.rssi);
@@ -473,8 +691,30 @@ static esp_err_t action_handler(esp_zb_core_action_callback_id_t id, const void 
             update_onoff(m->src_address.u.short_addr, m->src_endpoint,
                          *(uint8_t *)m->attribute.data.value != 0, 0);
         }
+    } else if (id == ESP_ZB_CORE_CMD_REPORT_CONFIG_RESP_CB_ID) {
+        const esp_zb_zcl_cmd_config_report_resp_message_t *m = message;
+        if (m) ESP_LOGI(TAG, "ZCL reporting config response short=0x%04x endpoint=%u status=0x%02x tsn=%u",
+                        m->info.src_address.u.short_addr, m->info.src_endpoint,
+                        m->info.status, m->info.header.tsn);
+    } else if (id == ESP_ZB_CORE_CMD_DEFAULT_RESP_CB_ID) {
+        const esp_zb_zcl_cmd_default_resp_message_t *m = message;
+        if (m) ESP_LOGI(TAG, "ZCL default response short=0x%04x endpoint=%u cluster=0x%04x command=0x%02x status=0x%02x tsn=%u",
+                        m->info.src_address.u.short_addr, m->info.src_endpoint, m->info.cluster,
+                        m->resp_to_cmd, m->status_code, m->info.header.tsn);
     }
     return ESP_OK;
+}
+
+static void command_send_status_handler(esp_zb_zcl_command_send_status_message_t message)
+{
+    if (message.dst_addr.addr_type == ESP_ZB_ZCL_ADDR_TYPE_SHORT) {
+        ESP_LOGI(TAG, "ZCL send status tsn=%u short=0x%04x endpoint=%u status=%s",
+                 message.tsn, message.dst_addr.u.short_addr, message.dst_endpoint,
+                 esp_err_to_name(message.status));
+    } else {
+        ESP_LOGI(TAG, "ZCL send status tsn=%u endpoint=%u status=%s",
+                 message.tsn, message.dst_endpoint, esp_err_to_name(message.status));
+    }
 }
 
 static void commissioning_retry(uint8_t mode)
@@ -532,7 +772,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
         if (prior >= 0) {
             s_devices[prior].short_addr = d->device_short_addr;
             s_devices[prior].online = true;
+            s_last_seen_ms[prior] = now_ms();
             s_devices[prior].state[0] = s_devices[prior].state[1] = s_devices[prior].state[2] = ZB_CHANNEL_UNKNOWN;
+            save_devices();
         }
         xSemaphoreGive(s_devices_lock);
         discover_device(d->device_short_addr, d->ieee_addr);
@@ -579,6 +821,7 @@ static void zigbee_task(void *arg)
     esp_zb_ep_list_add_ep(eps, clusters, ep_cfg);
     esp_zb_device_register(eps);
     esp_zb_core_action_handler_register(action_handler);
+    esp_zb_zcl_command_send_status_handler_register(command_send_status_handler);
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_stack_main_loop();
     vTaskDelete(NULL);
@@ -588,6 +831,8 @@ esp_err_t zigbee_manager_start(void)
 {
     s_devices_lock = xSemaphoreCreateMutex();
     if (!s_devices_lock) return ESP_ERR_NO_MEM;
+    s_zigbee_io_queue = xQueueCreate(ZIGBEE_IO_QUEUE_DEPTH, sizeof(zigbee_io_operation_t));
+    if (!s_zigbee_io_queue) return ESP_ERR_NO_MEM;
     zb_state_cache_init(&s_state_cache, APP_ZIGBEE_STATE_MAX_AGE_MS, APP_ZIGBEE_READ_TIMEOUT_MS);
     load_devices();
     esp_zb_platform_config_t platform = {
@@ -600,11 +845,9 @@ esp_err_t zigbee_manager_start(void)
     if (xTaskCreate(zigbee_task, "zigbee_main", 8192, NULL, 5, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-#if LIGHTGW_HAS_CONTROL
-    if (xTaskCreate(state_poll_task, "zigbee_poll", 3072, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreate(zigbee_io_task, "zigbee_io", 4096, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-#endif
     return ESP_OK;
 }
 
@@ -651,12 +894,12 @@ esp_err_t zigbee_manager_diagnostic_read(uint16_t short_addr)
     xSemaphoreGive(s_devices_lock);
     if (!count) return ESP_ERR_NOT_FOUND;
 
-    esp_zb_lock_acquire(portMAX_DELAY);
+    int64_t due_ms = now_ms();
     for (uint8_t i = 0; i < count; ++i) {
-        send_read(short_addr, endpoints[i], ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
-                  ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+        queue_read(short_addr, endpoints[i], ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+                   ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+                   due_ms + (int64_t)i * APP_ZIGBEE_READ_STAGGER_MS);
     }
-    esp_zb_lock_release();
     ESP_LOGI(TAG, "DIAG read-only state refresh short=0x%04x endpoints=%u (no control command)",
              short_addr, count);
     return ESP_OK;
@@ -697,9 +940,17 @@ esp_err_t zigbee_manager_confirm_mapping(uint16_t short_addr, const uint8_t endp
     }
     xSemaphoreGive(s_devices_lock);
     if (!valid) return ESP_ERR_INVALID_ARG;
-    esp_zb_lock_acquire(portMAX_DELAY);
-    configure_onoff_reporting(short_addr, endpoints);
-    esp_zb_lock_release();
+    int64_t due_ms = now_ms();
+    for (int ch = 0; ch < 3; ++ch) {
+        zigbee_io_operation_t config = {
+            .type = ZIGBEE_IO_CONFIG_REPORT,
+            .short_addr = short_addr,
+            .endpoint = endpoints[ch],
+            .due_ms = due_ms + (int64_t)ch * APP_ZIGBEE_READ_STAGGER_MS,
+        };
+        queue_operation(&config);
+    }
+    queue_all_states(short_addr, endpoints, due_ms + 3 * APP_ZIGBEE_READ_STAGGER_MS);
     ESP_LOGW(TAG, "Physical mapping confirmed short=0x%04x left=%u center=%u right=%u",
              short_addr, endpoints[0], endpoints[1], endpoints[2]);
     return ESP_OK;
@@ -710,28 +961,31 @@ esp_err_t zigbee_manager_set_channel(uint16_t addr, unsigned channel, bool on)
 {
     if (!s_network_ready || channel > 2) return ESP_ERR_INVALID_ARG;
     uint8_t ep = 0;
+    uint32_t generation = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(addr);
     if (idx >= 0 && s_devices[idx].supported && s_devices[idx].mapping_confirmed) {
         ep = s_devices[idx].endpoints[channel];
+        generation = ++s_control_generation[idx][channel];
+        if (generation == 0) generation = ++s_control_generation[idx][channel];
         if (ep) zb_state_cache_begin_read(&s_state_cache, addr, ep, now_ms());
         s_devices[idx].state[channel] = ZB_CHANNEL_UNKNOWN;
     }
     xSemaphoreGive(s_devices_lock);
     if (!ep) return ESP_ERR_NOT_FOUND;
-    ESP_LOGI(TAG, "Control TX short=0x%04x channel=%u endpoint=%u value=%s",
+    zigbee_io_operation_t operation = {
+        .type = ZIGBEE_IO_CONTROL,
+        .short_addr = addr,
+        .endpoint = ep,
+        .requested_on = on,
+        .attempt = 0,
+        .control_generation = generation,
+        .origin_ms = now_ms(),
+        .due_ms = now_ms(),
+    };
+    ESP_LOGI(TAG, "Control queued short=0x%04x channel=%u endpoint=%u value=%s",
              addr, channel, ep, on ? "ON" : "OFF");
-    esp_zb_zcl_on_off_cmd_t cmd = {0};
-    cmd.zcl_basic_cmd.dst_addr_u.addr_short = addr;
-    cmd.zcl_basic_cmd.dst_endpoint = ep;
-    cmd.zcl_basic_cmd.src_endpoint = APP_GATEWAY_ENDPOINT;
-    cmd.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-    cmd.on_off_cmd_id = on ? ESP_ZB_ZCL_CMD_ON_OFF_ON_ID : ESP_ZB_ZCL_CMD_ON_OFF_OFF_ID;
-    esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_zcl_on_off_cmd_req(&cmd);
-    send_read(addr, ep, ESP_ZB_ZCL_CLUSTER_ID_ON_OFF, ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
-    esp_zb_lock_release();
-    return ESP_OK;
+    return queue_operation(&operation) ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 size_t zigbee_manager_snapshot(zb_device_snapshot_t *out, size_t capacity)
@@ -741,6 +995,8 @@ size_t zigbee_manager_snapshot(zb_device_snapshot_t *out, size_t capacity)
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES && n < capacity; ++i) if (s_devices[i].used) {
         out[n] = s_devices[i];
+        out[n].online = s_last_seen_ms[i] > 0 &&
+                        now_ms() - s_last_seen_ms[i] <= APP_ZIGBEE_OFFLINE_AFTER_MS;
         for (int ch = 0; ch < 3; ++ch) {
             zb_state_cache_entry_t cached;
             if (!s_devices[i].endpoints[ch] ||
@@ -774,7 +1030,12 @@ esp_err_t zigbee_manager_get_channel_status(uint16_t short_addr, unsigned channe
         status->valid = cached.valid;
         status->read_pending = cached.read_pending;
         status->read_timed_out = cached.read_timed_out;
+        status->last_known_valid = cached.last_known_valid;
+        status->last_known_state = cached.last_known_value == ZB_CACHE_ON ? ZB_CHANNEL_ON :
+                                   cached.last_known_value == ZB_CACHE_OFF ? ZB_CHANNEL_OFF : ZB_CHANNEL_UNKNOWN;
+        status->consecutive_failures = cached.consecutive_failures;
         status->updated_us = cached.updated_ms * 1000;
+        status->last_known_updated_us = cached.last_known_updated_ms * 1000;
         if (cached.valid) status->state = cached.value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
     }
     xSemaphoreGive(s_devices_lock);
@@ -806,7 +1067,12 @@ esp_err_t zigbee_manager_get_endpoint_status(uint16_t short_addr, uint8_t endpoi
         status->valid = cached.valid;
         status->read_pending = cached.read_pending;
         status->read_timed_out = cached.read_timed_out;
+        status->last_known_valid = cached.last_known_valid;
+        status->last_known_state = cached.last_known_value == ZB_CACHE_ON ? ZB_CHANNEL_ON :
+                                   cached.last_known_value == ZB_CACHE_OFF ? ZB_CHANNEL_OFF : ZB_CHANNEL_UNKNOWN;
+        status->consecutive_failures = cached.consecutive_failures;
         status->updated_us = cached.updated_ms * 1000;
+        status->last_known_updated_us = cached.last_known_updated_ms * 1000;
         if (cached.valid) status->state = cached.value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
     }
     xSemaphoreGive(s_devices_lock);

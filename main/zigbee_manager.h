@@ -34,9 +34,13 @@ typedef struct {
     bool valid;
     bool read_pending;
     bool read_timed_out;
+    bool last_known_valid;
     zb_channel_state_t state;
+    zb_channel_state_t last_known_state;
     uint8_t endpoint;
+    uint16_t consecutive_failures;
     int64_t updated_us;
+    int64_t last_known_updated_us;
 } zb_channel_status_t;
 
 esp_err_t zigbee_manager_start(void);

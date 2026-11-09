@@ -492,7 +492,11 @@ static esp_err_t status_get(httpd_req_t *req)
             cJSON_AddBoolToObject(detail, "valid", channel.valid);
             cJSON_AddBoolToObject(detail, "read_pending", channel.read_pending);
             cJSON_AddBoolToObject(detail, "read_timed_out", channel.read_timed_out);
+            cJSON_AddBoolToObject(detail, "last_known_valid", channel.last_known_valid);
+            cJSON_AddNumberToObject(detail, "last_known_state", channel.last_known_state);
+            cJSON_AddNumberToObject(detail, "consecutive_failures", channel.consecutive_failures);
             cJSON_AddNumberToObject(detail, "updated_uptime_ms", channel.updated_us / 1000);
+            cJSON_AddNumberToObject(detail, "last_known_updated_uptime_ms", channel.last_known_updated_us / 1000);
             cJSON_AddItemToArray(state_details, detail);
         }
         cJSON *discovered = cJSON_AddArrayToObject(d, "discovered_endpoints");
@@ -512,7 +516,11 @@ static esp_err_t status_get(httpd_req_t *req)
             cJSON_AddBoolToObject(endpoint_json, "valid", endpoint_status.valid);
             cJSON_AddBoolToObject(endpoint_json, "read_pending", endpoint_status.read_pending);
             cJSON_AddBoolToObject(endpoint_json, "read_timed_out", endpoint_status.read_timed_out);
+            cJSON_AddBoolToObject(endpoint_json, "last_known_valid", endpoint_status.last_known_valid);
+            cJSON_AddNumberToObject(endpoint_json, "last_known_state", endpoint_status.last_known_state);
+            cJSON_AddNumberToObject(endpoint_json, "consecutive_failures", endpoint_status.consecutive_failures);
             cJSON_AddNumberToObject(endpoint_json, "updated_uptime_ms", endpoint_status.updated_us / 1000);
+            cJSON_AddNumberToObject(endpoint_json, "last_known_updated_uptime_ms", endpoint_status.last_known_updated_us / 1000);
             cJSON_AddItemToArray(onoff_states, endpoint_json);
         }
         cJSON_AddItemToArray(array, d);
