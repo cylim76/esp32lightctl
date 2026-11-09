@@ -48,7 +48,7 @@ input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;
  <div class="status"><span id="timeDot" class="dot"></span>NTP 时间<br><small id="timeText" class="muted">—</small></div>
  <div class="status"><span id="zbDot" class="dot"></span>Zigbee 网络<br><small id="zbText" class="muted">—</small></div>
  <div class="status"><span id="pairDot" class="dot"></span>允许入网<br><small id="pairText" class="muted">已关闭</small></div>
- </div>
+ </div><div id="zigbeePairActions" class="row" style="margin-top:14px"><button onclick="pair()">开放 Zigbee 配对 180 秒</button></div><p class="muted">仅在添加或重新配对 Zigbee 设备时使用。窗口到期后自动关闭，不会长期开放。</p>
 </section>
 
 <section class="card tab-panel" data-panel="status" hidden><h2>网络访问</h2>
@@ -85,7 +85,7 @@ input,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #344363;
 
 <section class="card tab-panel" data-panel="rainmaker" hidden><h2>ESP RainMaker 云端连接</h2><div class="module-box"><div id="rainmakerModuleStatus" class="diag">加载中…</div><div class="row" style="margin-top:10px"><button id="rainmakerToggle" onclick="toggleExtension('rainmaker')" disabled>启用</button></div><div id="rainmakerMapping" hidden><label>RainMaker 用户 ID<input id="rainmakerUserId" maxlength="64" autocomplete="off"></label><label>一次性映射 Secret<input id="rainmakerSecret" type="password" maxlength="64" autocomplete="new-password"></label><button onclick="mapRainmaker()">提交账户绑定</button></div><p class="muted">账户绑定令牌只在内存中提交，不保存到本项目配置；HTTP 无 TLS，仅限可信本地网络。云端显示“在线”必须来自真实 MQTT 连接，编译成功不等于云端功能可用。</p></div></section>
 
-<section class="card tab-panel" data-panel="operation"><h2>办公室控制</h2><div id="zigbeeActions" class="row"><button onclick="pair()">开放配对 180 秒</button><button id="allOffButton" class="danger" onclick="allOff()">全部关闭</button></div></section>
+<section class="card tab-panel" data-panel="operation"><h2>办公室控制</h2><div id="zigbeeActions" class="row"><button id="allOffButton" class="danger" onclick="allOff()">全部关灯</button></div><p class="muted">向所有已确认端点映射的 Aqara D1 照明回路分别发送明确的 OFF，不使用 Toggle，也不控制空调。</p></section>
 
 <section id="devicesCard" class="card tab-panel" data-panel="operation" data-stage-min="2"><h2>Aqara D1 照明</h2><div id="devices" class="muted">尚未发现设备</div></section>
 
@@ -147,7 +147,7 @@ async function refresh(){
   if(s.provisioning)return;
   currentStage=s.stage;
   let activeTab=document.querySelector('.tabs button.active')?.dataset.tab||'operation';applyTabPanels(activeTab);
-  $('zigbeeActions').hidden=s.stage<2;$('allOffButton').hidden=s.stage<4;
+  $('zigbeePairActions').hidden=s.stage<2;$('zigbeeActions').hidden=s.stage<4;$('allOffButton').hidden=s.stage<4;
   if(document.activeElement!==$('runtimeDeviceName'))$('runtimeDeviceName').value=s.device_name||'lightgw';
   dots('wifiDot',s.wifi_connected);$('wifiText').textContent=s.wifi_connected?`${s.ip} · RSSI ${s.wifi_rssi} dBm`:'未连接';
   dots('timeDot',s.time_synced);$('timeText').textContent=s.time_synced?`${s.time.source} · VALID`:'INVALID';

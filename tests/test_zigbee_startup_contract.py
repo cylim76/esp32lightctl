@@ -40,6 +40,9 @@ assert "${n}</label>" in page
 assert ">周${n}</label>" not in page
 assert "定时任务只发送明确的 OFF" in page
 assert 'id="operationLux"' in page and 'id="operationClimate"' in page
+assert 'id="zigbeePairActions"' in page
+assert "开放 Zigbee 配对 180 秒" in page
+assert "全部关灯" in page and "也不控制空调" in page
 assert "APP_ZIGBEE_STATE_POLL_MS" in source
 assert 'xTaskCreate(state_poll_task, "zigbee_poll"' in source
 assert "static bool begin_discovery" in source
