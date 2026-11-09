@@ -34,6 +34,12 @@ assert "scheduleTargets=['出口照明','企划照明','会议室照明'" in pag
 assert ".switches{grid-template-columns:repeat(3,minmax(0,1fr))" in page
 assert "b.textContent=`${n}：${state(d.states[i])}`" in page
 assert "`${names[channel]}${on?'开启':'关闭'}`" in page
+assert 'id="scheduleTargetTabs"' in page
+assert "function activateScheduleTarget(target)" in page
+assert "${n}</label>" in page
+assert ">周${n}</label>" not in page
+assert "定时任务只发送明确的 OFF" in page
+assert 'id="operationLux"' in page and 'id="operationClimate"' in page
 assert "APP_ZIGBEE_STATE_POLL_MS" in source
 assert 'xTaskCreate(state_poll_task, "zigbee_poll"' in source
 assert "static bool begin_discovery" in source

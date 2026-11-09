@@ -26,5 +26,20 @@ assert 'Administrator hash migrated' in settings
 assert 'APP_PROVISION_AP_PASSWORD     "admin123"' in config
 assert 'strlcpy(s_ap_password, APP_PROVISION_AP_PASSWORD' in wifi
 assert "esp_random" not in wifi
+assert '"/api/settings/device-name"' in web
+assert '"/api/settings/admin-password"' in web
+assert "settings_save_device_name(name_copy)" in web
+assert "settings_verify_admin(username_copy, current_copy)" in web
+assert "settings_save_admin(username_copy, replacement_copy)" in web
+assert 'mdns_updates_after_restart' in web
+assert 'sessions_cleared' in web
+assert 'id="runtimeDeviceName"' in page
+assert 'id="currentAdminPassword" type="password"' in page
+assert "api('/api/settings/device-name'" in page
+assert "api('/api/settings/admin-password'" in page
+for tab in ("operation", "schedules", "status", "backup", "time", "extensions", "rainmaker", "logs"):
+    assert f'data-tab="{tab}"' in page
+assert 'class="active" data-tab="operation"' in page
+assert "function showTab(name)" in page
 
 print("AUTH_CONTRACT_TEST PASS")

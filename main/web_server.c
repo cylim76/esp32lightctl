@@ -719,6 +719,69 @@ static esp_err_t wifi_reconfigure_post(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t device_name_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *name = json ? cJSON_GetObjectItem(json, "device_name") : NULL;
+    if (!cJSON_IsString(name)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "device_name is required");
+    }
+    char name_copy[33] = {0};
+    strlcpy(name_copy, name->valuestring, sizeof(name_copy));
+    cJSON_Delete(json);
+    esp_err_t err = settings_save_device_name(name_copy);
+    if (err != ESP_OK) {
+        return send_json_error(req, "400 Bad Request",
+                               "Device name must use lowercase letters, digits and hyphens");
+    }
+    ESP_LOGI(TAG, "Authenticated device-name update saved: %s; restarting DHCP/mDNS identity",
+             name_copy);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true,\"mdns_updates_after_restart\":true}");
+    xTaskCreate(restart_task, "name_restart", 2048, NULL, 3, NULL);
+    return ESP_OK;
+}
+
+static esp_err_t admin_password_post(httpd_req_t *req)
+{
+    if (!authorized(req)) return ESP_OK;
+    cJSON *json = receive_json(req);
+    cJSON *current = json ? cJSON_GetObjectItem(json, "current_password") : NULL;
+    cJSON *replacement = json ? cJSON_GetObjectItem(json, "new_password") : NULL;
+    bool valid = cJSON_IsString(current) && cJSON_IsString(replacement) &&
+                 strlen(current->valuestring) <= 64 &&
+                 strlen(replacement->valuestring) >= 12 && strlen(replacement->valuestring) <= 64;
+    char current_copy[65] = {0}, replacement_copy[65] = {0};
+    char username_copy[33] = {0};
+    if (valid) {
+        strlcpy(current_copy, current->valuestring, sizeof(current_copy));
+        strlcpy(replacement_copy, replacement->valuestring, sizeof(replacement_copy));
+        memset(current->valuestring, 0, strlen(current->valuestring));
+        memset(replacement->valuestring, 0, strlen(replacement->valuestring));
+    }
+    cJSON_Delete(json);
+    if (!valid) return send_json_error(req, "400 Bad Request", "Invalid password fields");
+    strlcpy(username_copy, settings_get()->admin_user, sizeof(username_copy));
+    if (!settings_verify_admin(username_copy, current_copy)) {
+        memset(current_copy, 0, sizeof(current_copy));
+        memset(replacement_copy, 0, sizeof(replacement_copy));
+        memset(username_copy, 0, sizeof(username_copy));
+        return send_json_error(req, "403 Forbidden", "Current password is incorrect");
+    }
+    memset(current_copy, 0, sizeof(current_copy));
+    esp_err_t err = settings_save_admin(username_copy, replacement_copy);
+    memset(replacement_copy, 0, sizeof(replacement_copy));
+    memset(username_copy, 0, sizeof(username_copy));
+    if (err != ESP_OK) return send_json_error(req, "500 Internal Server Error", esp_err_to_name(err));
+    ESP_LOGI(TAG, "Authenticated administrator password update saved; restarting to clear sessions");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true,\"sessions_cleared\":true}");
+    xTaskCreate(restart_task, "auth_restart", 2048, NULL, 3, NULL);
+    return ESP_OK;
+}
+
 static esp_err_t time_ntp_post(httpd_req_t *req)
 {
     if (!authorized(req)) return ESP_OK;
@@ -1220,6 +1283,8 @@ esp_err_t web_server_start(void)
         {.uri = "/api/backup/import/commit", .method = HTTP_POST, .handler = backup_commit_post},
         {.uri = "/api/provision", .method = HTTP_POST, .handler = provision_post},
         {.uri = "/api/wifi/reconfigure", .method = HTTP_POST, .handler = wifi_reconfigure_post},
+        {.uri = "/api/settings/device-name", .method = HTTP_POST, .handler = device_name_post},
+        {.uri = "/api/settings/admin-password", .method = HTTP_POST, .handler = admin_password_post},
         {.uri = "/api/time/ntp", .method = HTTP_POST, .handler = time_ntp_post},
         {.uri = "/api/time/manual", .method = HTTP_POST, .handler = time_manual_post},
         {.uri = "/api/extensions", .method = HTTP_GET, .handler = extensions_get},
