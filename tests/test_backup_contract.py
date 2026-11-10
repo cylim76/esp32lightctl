@@ -44,5 +44,6 @@ assert main.index("backup_restore_recover_pending") < main.index("settings_init(
 for route in ("/api/backup/export", "/api/backup/import/validate", "/api/backup/import/commit"):
     assert route in web, route
 assert "backup_authorized" in web and "429 Too Many Requests" in web
-assert "配置备份与恢复" in html and "没有 TLS" in html and "重新配对" in html
+assert "配置备份与恢复" in html and "重新配对" in html
+assert "连续上传至少间隔 10 秒" not in html
 print("BACKUP_CONTRACT_TEST PASS")

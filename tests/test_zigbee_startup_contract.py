@@ -35,9 +35,17 @@ assert ".switches{grid-template-columns:repeat(3,minmax(0,1fr))" in page
 assert "on.textContent='开'" in page and "off.textContent='关'" in page
 assert "on.onclick=()=>setSwitch(d.short,i,true)" in page
 assert "off.onclick=()=>setSwitch(d.short,i,false)" in page
+assert 'class="channel-state ${statusClass}"' in page
+assert "d.states[i]===1?'已开':'已关'" in page
+assert "x.read_pending?'刷新中':'未知'" in page
+assert 'id="zigbeeDeviceDiagnostics"' in page
 assert "`${names[channel]}${on?'开启':'关闭'}`" in page
 assert 'id="scheduleTargetTabs"' in page
 assert "function activateScheduleTarget(target)" in page
+assert 'class="entry-time" type="time"' in page
+assert "class=\"entry-hour\"" not in page and "class=\"entry-minute\"" not in page
+assert "失败重试与补执行" in page
+assert "补执行有效期（分钟）" in page
 assert "${n}</label>" in page
 assert ">周${n}</label>" not in page
 assert "定时任务只发送明确的 OFF" in page
