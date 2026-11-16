@@ -16,6 +16,7 @@
 #include "stage_config.h"
 #include "storage_manager.h"
 #include "zigbee_state_cache.h"
+#include "zigbee_control_retry.h"
 #include "zigbee_recovery.h"
 #include "zcl/esp_zigbee_zcl_command.h"
 #include "ezbee/nwk.h"
@@ -455,16 +456,15 @@ static void execute_io_operation(const zigbee_io_operation_t *operation)
     ESP_LOGI(TAG, "Control TX tsn=%u short=0x%04x endpoint=%u value=%s attempt=%u/%u",
              tsn, operation->short_addr, operation->endpoint,
              operation->requested_on ? "ON" : "OFF", operation->attempt + 1,
-             APP_ZIGBEE_CONTROL_MAX_ATTEMPTS);
+             ZIGBEE_CONTROL_RETRY_ATTEMPTS);
 
     queue_read(operation->short_addr, operation->endpoint, ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
                ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
                now_ms() + APP_ZIGBEE_CONTROL_READ_DELAY_MS);
-    if (operation->attempt + 1 < APP_ZIGBEE_CONTROL_MAX_ATTEMPTS) {
+    if (zigbee_control_retry_has_next(operation->attempt)) {
         zigbee_io_operation_t retry = *operation;
         retry.attempt++;
-        retry.due_ms = retry.origin_ms + (retry.attempt == 1 ? APP_ZIGBEE_CONTROL_RETRY_1_MS :
-                                                               APP_ZIGBEE_CONTROL_RETRY_2_MS);
+        retry.due_ms = retry.origin_ms + zigbee_control_retry_offset_ms(retry.attempt);
         queue_operation(&retry);
     }
 }

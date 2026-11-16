@@ -241,3 +241,11 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - 最终固件启动后的实机回读：ep1/ep2/ep3 均返回 ON、`ESP_OK`，RSSI 约 -54/-55/-55 dBm。设备状态缓存已获得三路新鲜证据；浏览器实际颜色呈现仍由用户刷新页面确认。
 - 已知技术债：当前用 2.0.5 官方 1.x 兼容层完成第一轮安全迁移，编译存在弃用告警；尚未逐项改成全部 2.x 原生 API。该状态为 `PARTIALLY IMPLEMENTED / BUILD PASS`，不是完整原生迁移完成。
 - GitHub Actions 工作流已移除 QEMU 测试数量硬编码，改为匹配测试程序输出的动态计数；本轮只完成本地验证，推送后必须等待 GitHub Actions 实际绿色才能记录 `CI PASS`。
+
+## D1 静默设备控制送达窗口（2026-11-16）
+
+- 确定问题：原控制只在约 0、1.8、4.5 秒发送三次，并在 15 秒结束上层确认；D1 静默或短时不可达时可能完全错过该窗口，导致页面已有旧 ON 状态但新的 OFF 实际未送达。
+- 修改：将明确 ON/OFF 的有界发送窗口调整为 0、6、12、24、48 秒，上层确认期限调整为 65 秒。新鲜匹配反馈会取消剩余发送；同一端点的新命令递增 generation，旧命令不能在稍后再次执行；仍禁止 Toggle。
+- 自动测试：`tests/test_zigbee_startup_contract.py` PASS；ESP32-C6 生产 C 测试固件 BUILD PASS；Espressif QEMU 从干净启动实际执行 `23/23 PASS`。测试曾发现 `uint8_t` 的 255 溢出边界并完成修复、全量重跑。
+- Stage 4 真实构建 PASS：应用大小 1,402,608 B，最小 3 MiB 应用分区约 55% 空闲；镜像 SHA-256 `d6caa70e0c6c38c1ebb1fa28ea379c4b04b1a7af85a53bedfd0a4f12a41269a6`。
+- 实机刷写 PASS，但 D1 静默后的真实继电器控制仍为 `NOT TESTED`：启动后设备自动 Announce，首轮 reporting/回读却返回 ERROR。需在不影响办公室工作的时段，等待 D1 静默至少 10～15 分钟后验证一次 Web 指令和一次定时 OFF，并保留完整串口日志。

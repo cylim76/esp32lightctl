@@ -82,12 +82,15 @@
 
 ## Phase A 统一控制专项
 
-- 烧录 `tests/phase_a_app/build-quality-c6/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY PASS: 16 tests` 的完整串口日志；16 项全部 PASS 才能把 C6 目标板测试状态从 `NOT TESTED` 改为 PASS。QEMU PASS 只能记为 `SIMULATED PASS`。
+- 烧录 `tests/phase_a_app/build-quality-c6/esp32lightctl_phase_a_tests.bin`，保存从启动到 `PHASE_A_C_TEST SUMMARY PASS` 的完整串口日志；汇总数必须等于该固件实际注册的测试数（当前 23 项）且全部 PASS，才能把 C6 目标板测试状态从 `NOT TESTED` 改为 PASS。QEMU PASS 只能记为 `SIMULATED PASS`，不得在脚本中硬编码旧测试数量。
 - 配对两台 Zigbee 设备（或一台设备重新配对并观察短地址变化），验证相同 endpoint 编号的状态不会串到另一 IEEE 设备。
 - 先获得 OFF，再等待超过缓存有效期或制造回读超时；新 OFF 命令不得立即使用旧 OFF 显示 `CONFIRMED`。
 - 回读超时后恢复设备并产生新报告，只有新报告到达后才能 `CONFIRMED`。
 - 连续提交超过队列深度的命令，必须出现有界 `FAILED/queue full`，不得阻塞 HTTP/Zigbee 任务或触发无限重试。
 - 同一分钟配置灯光与空调任务：灯光等待新鲜 Zigbee 确认；IR 必须等待 RMT 完成才是 `SENT`，且空调 actual state 始终为 `UNKNOWN`。
+- 保持 D1 和 Coordinator 正常供电并静默 10～15 分钟；选择不会影响办公的回路发送一次明确 ON/OFF。串口应显示最多 5 次发送（0/6/12/24/48 秒），实际继电器动作应发生，且只有本次命令后的新鲜回读才能标记 CONFIRMED。
+- 在上述重发窗口内立即发送相反的新命令；旧命令剩余重发必须显示 superseded 并取消，不能在 48 秒内再次改变用户刚设置的状态。
+- 对定时 OFF 重复同样的静默验证；到 65 秒仍无新鲜反馈时必须记录失败并进入调度器的有限重试/补执行策略，不得使用旧 OFF 缓存或无限重发。
 
 ## Flash/NVS 故障专项
 

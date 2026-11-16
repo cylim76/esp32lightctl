@@ -2,6 +2,8 @@ from pathlib import Path
 
 
 source = (Path(__file__).resolve().parents[1] / "main/zigbee_manager.c").read_text(encoding="utf-8")
+retry = (Path(__file__).resolve().parents[1] / "main/zigbee_control_retry.c").read_text(encoding="utf-8")
+config = (Path(__file__).resolve().parents[1] / "main/app_config.h").read_text(encoding="utf-8")
 header = (Path(__file__).resolve().parents[1] / "main/zigbee_manager.h").read_text(encoding="utf-8")
 web = (Path(__file__).resolve().parents[1] / "main/web_server.c").read_text(encoding="utf-8")
 page = (Path(__file__).resolve().parents[1] / "main/web/index.html").read_text(encoding="utf-8")
@@ -65,7 +67,13 @@ assert "映射：${d.mapping_confirmed" not in page
 assert "APP_ZIGBEE_STATE_POLL_MS" in source
 assert 'xTaskCreate(zigbee_io_task, "zigbee_io"' in source
 assert "APP_ZIGBEE_READ_STAGGER_MS" in source
-assert "APP_ZIGBEE_CONTROL_MAX_ATTEMPTS" in source
+assert "ZIGBEE_CONTROL_RETRY_ATTEMPTS" in source
+assert "zigbee_control_retry_has_next" in source
+assert "control_is_current(operation)" in source
+assert "control_already_confirmed(operation)" in source
+assert "6000U" in retry and "12000U" in retry and "24000U" in retry and "48000U" in retry
+assert "APP_CONTROL_CONFIRM_TIMEOUT_MS 65000" in config
+assert "ESP_ZB_ZCL_CMD_ON_OFF_TOGGLE_ID" not in source
 assert "static bool begin_discovery" in source
 assert "static void end_discovery" in source
 assert "duplicate announce ignored" in source

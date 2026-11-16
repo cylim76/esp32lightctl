@@ -13,6 +13,7 @@
 #include "sht31_protocol.h"
 #include "zigbee_state_cache.h"
 #include "zigbee_recovery.h"
+#include "zigbee_control_retry.h"
 
 static const uint8_t IEEE_A[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 static const uint8_t IEEE_B[8] = {8, 7, 6, 5, 4, 3, 2, 1};
@@ -222,6 +223,24 @@ static void test_zigbee_recovery_is_bounded_and_cancelled_by_feedback(void)
     CHECK(zigbee_recovery_take_due(&recovery, 182000, 0, &attempt) && attempt == 3);
     CHECK(!recovery.active);
     CHECK(!zigbee_recovery_take_due(&recovery, 500000, 0, &attempt));
+}
+
+static void test_zigbee_control_retry_window_is_bounded_and_increasing(void)
+{
+    static const uint32_t expected[ZIGBEE_CONTROL_RETRY_ATTEMPTS] = {
+        0U, 6000U, 12000U, 24000U, 48000U,
+    };
+    for (uint8_t attempt = 0; attempt < ZIGBEE_CONTROL_RETRY_ATTEMPTS; ++attempt) {
+        CHECK(zigbee_control_retry_offset_ms(attempt) == expected[attempt]);
+        CHECK(zigbee_control_retry_has_next(attempt) ==
+              (attempt + 1U < ZIGBEE_CONTROL_RETRY_ATTEMPTS));
+        if (attempt > 0) {
+            CHECK(zigbee_control_retry_offset_ms(attempt) >
+                  zigbee_control_retry_offset_ms((uint8_t)(attempt - 1U)));
+        }
+    }
+    CHECK(zigbee_control_retry_offset_ms(255) == 48000U);
+    CHECK(!zigbee_control_retry_has_next(255));
 }
 
 static void test_command_lifecycle(void)
@@ -454,6 +473,7 @@ void app_main(void)
     RUN(test_fresh_feedback_after_timeout_recovers);
     RUN(test_short_address_reuse_isolated);
     RUN(test_zigbee_recovery_is_bounded_and_cancelled_by_feedback);
+    RUN(test_zigbee_control_retry_window_is_bounded_and_increasing);
     RUN(test_command_lifecycle);
     RUN(test_command_ring_rejects_inflight_overwrite);
     RUN(test_scheduler_unchanged_write_is_skipped);

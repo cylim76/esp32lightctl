@@ -42,4 +42,6 @@ HTTP 提交返回命令 ID 和 `PENDING`。`GET /api/control/result?id=N` 返回
 
 ## 测试
 
-`tests/phase_a_app` 直接编译生产代码 `zigbee_state_cache.c` 和 `device_state.c`，覆盖：多设备同端点隔离、过期 OFF、回读超时、超时后新反馈恢复、重新配对代次、短地址复用、命令生命周期和环形历史拒绝覆盖未完成命令。8 项已在 ESP-IDF 官方 ESP32-C3 QEMU 中执行通过，记为 `SIMULATED PASS`。烧录 C6 测试固件后串口仍必须出现全部 `PHASE_A_C_TEST PASS` 与最终汇总；目标板执行前保持 `NOT TESTED`。
+`tests/phase_a_app` 直接编译生产代码 `zigbee_state_cache.c`、`device_state.c` 和 `zigbee_control_retry.c`，覆盖：多设备同端点隔离、过期 OFF、回读超时、超时后新反馈恢复、重新配对代次、短地址复用、命令生命周期、环形历史拒绝覆盖未完成命令，以及 0/6/12/24/48 秒重发窗口的递增、有界和溢出边界。完整生产 C 测试已在 ESP-IDF 官方 QEMU 中执行 `23/23 PASS`，记为 `SIMULATED PASS`。烧录 C6 测试固件后串口仍必须出现全部 `PHASE_A_C_TEST PASS` 与最终汇总；目标板执行前保持 `NOT TESTED`。
+
+对 D1 的明确 ON/OFF 会跨 48 秒最多发送 5 次。每次发送后回读对应设备、对应端点；只有命令开始后的新鲜匹配反馈才确认成功。新命令会使同端点旧重发失效，避免旧 OFF 在用户重新开灯后延迟执行。该机制提升静默设备的送达机会，但不能伪造在线状态，也不能替代实际 RF/继电器测试。

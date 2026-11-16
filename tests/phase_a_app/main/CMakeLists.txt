@@ -3,6 +3,7 @@ idf_component_register(
         "phase_a_tests.c"
         "../../../main/zigbee_state_cache.c"
         "../../../main/zigbee_recovery.c"
+        "../../../main/zigbee_control_retry.c"
         "../../../main/device_state.c"
         "../../../main/scheduler_persistence.c"
         "../../../main/backup_integrity.c"
