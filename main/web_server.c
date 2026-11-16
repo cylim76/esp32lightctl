@@ -480,6 +480,10 @@ static esp_err_t status_get(httpd_req_t *req)
         cJSON_AddBoolToObject(d, "supported", devices[i].supported);
         cJSON_AddBoolToObject(d, "mapping_confirmed", devices[i].mapping_confirmed);
         cJSON_AddBoolToObject(d, "online", devices[i].online);
+        int64_t last_seen_age_ms = -1;
+        zigbee_manager_get_last_seen_age(devices[i].short_addr, &last_seen_age_ms);
+        cJSON_AddNumberToObject(d, "last_seen_age_seconds",
+                                last_seen_age_ms >= 0 ? last_seen_age_ms / 1000 : -1);
         cJSON_AddNumberToObject(d, "rssi", devices[i].last_rssi);
         cJSON *states = cJSON_AddArrayToObject(d, "states");
         cJSON *state_details = cJSON_AddArrayToObject(d, "state_details");

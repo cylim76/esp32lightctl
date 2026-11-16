@@ -57,3 +57,4 @@ esp_err_t zigbee_manager_get_channel_status(uint16_t short_addr, unsigned channe
                                             zb_channel_status_t *status);
 esp_err_t zigbee_manager_get_endpoint_status(uint16_t short_addr, uint8_t endpoint,
                                              zb_channel_status_t *status);
+esp_err_t zigbee_manager_get_last_seen_age(uint16_t short_addr, int64_t *age_ms);

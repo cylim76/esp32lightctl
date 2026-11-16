@@ -18,6 +18,7 @@
 #include "zigbee_state_cache.h"
 #include "zigbee_recovery.h"
 #include "zcl/esp_zigbee_zcl_command.h"
+#include "ezbee/nwk.h"
 #include "ezbee/secur.h"
 
 static const char *TAG = "zigbee";
@@ -178,6 +179,52 @@ static int find_or_add_device(uint16_t short_addr, const esp_zb_ieee_addr_t ieee
     }
     return free_slot;
 }
+
+/* Resolve the current 16-bit address from the stack's IEEE-address table.
+ * A child may receive a new short address after a rejoin while the Web page
+ * still carries the previously persisted address.  The IEEE address is the
+ * stable identity; never treat this lookup alone as proof of a fresh reply. */
+static uint16_t resolve_short_address(const esp_zb_ieee_addr_t ieee,
+                                      uint16_t stored_addr,
+                                      const char *reason)
+{
+    if (!s_network_ready) return stored_addr;
+    ezb_shortaddr_t resolved = UINT16_MAX;
+    esp_zb_lock_acquire(portMAX_DELAY);
+    ezb_err_t err = ezb_address_short_by_extended((const ezb_extaddr_t *)ieee, &resolved);
+    esp_zb_lock_release();
+    if (err != EZB_ERR_NONE || resolved == 0 || resolved == UINT16_MAX) return stored_addr;
+    if (resolved == stored_addr) return stored_addr;
+
+    bool changed = false;
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    int idx = find_device_by_ieee(ieee);
+    if (idx >= 0 && s_devices[idx].short_addr != resolved) {
+        uint16_t previous = s_devices[idx].short_addr;
+        s_devices[idx].short_addr = resolved;
+        s_devices[idx].online = false;
+        s_last_seen_ms[idx] = 0;
+        s_last_state_seen_ms[idx] = 0;
+        s_devices[idx].state[0] = s_devices[idx].state[1] = s_devices[idx].state[2] = ZB_CHANNEL_UNKNOWN;
+        zb_state_cache_device_announced(&s_state_cache, ieee, resolved, now_ms());
+        zigbee_recovery_begin(&s_recovery[idx], now_ms());
+        save_devices();
+        changed = true;
+        ESP_LOGW(TAG, "Resolved Zigbee short address 0x%04x -> 0x%04x (%s)",
+                 previous, resolved, reason ? reason : "address-table");
+    }
+    xSemaphoreGive(s_devices_lock);
+    return changed ? resolved : stored_addr;
+}
+#else
+static uint16_t resolve_short_address(const esp_zb_ieee_addr_t ieee,
+                                      uint16_t stored_addr,
+                                      const char *reason)
+{
+    (void)ieee;
+    (void)reason;
+    return stored_addr;
+}
 #endif
 
 static uint8_t send_read(uint16_t addr, uint8_t endpoint, uint16_t cluster, uint16_t attr)
@@ -280,7 +327,7 @@ static void poll_persisted_devices(void)
 
 static void queue_due_recovery_polls(void)
 {
-    struct { uint16_t addr; uint8_t eps[3]; uint8_t attempt; } pending[APP_MAX_ZIGBEE_DEVICES];
+    struct { uint16_t addr; esp_zb_ieee_addr_t ieee; uint8_t eps[3]; uint8_t attempt; } pending[APP_MAX_ZIGBEE_DEVICES];
     size_t count = 0;
     int64_t now = now_ms();
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
@@ -289,6 +336,7 @@ static void queue_due_recovery_polls(void)
         if (!s_devices[i].used || !s_devices[i].supported || !s_devices[i].mapping_confirmed) continue;
         if (!zigbee_recovery_take_due(&s_recovery[i], now, s_last_state_seen_ms[i], &attempt)) continue;
         pending[count].addr = s_devices[i].short_addr;
+        memcpy(pending[count].ieee, s_devices[i].ieee_addr, sizeof(esp_zb_ieee_addr_t));
         memcpy(pending[count].eps, s_devices[i].endpoints, sizeof(pending[count].eps));
         pending[count].attempt = attempt;
         count++;
@@ -296,6 +344,7 @@ static void queue_due_recovery_polls(void)
     xSemaphoreGive(s_devices_lock);
 
     for (size_t i = 0; i < count; ++i) {
+        pending[i].addr = resolve_short_address(pending[i].ieee, pending[i].addr, "recovery");
         ESP_LOGI(TAG, "Recovery probe %u/%u short=0x%04x",
                  pending[i].attempt + 1, ZIGBEE_RECOVERY_MAX_ATTEMPTS, pending[i].addr);
         queue_all_states(pending[i].addr, pending[i].eps, now);
@@ -422,18 +471,20 @@ static void execute_io_operation(const zigbee_io_operation_t *operation)
 
 static void queue_background_poll(void)
 {
-    struct { uint16_t addr; uint8_t eps[3]; } pending[APP_MAX_ZIGBEE_DEVICES];
+    struct { uint16_t addr; esp_zb_ieee_addr_t ieee; uint8_t eps[3]; } pending[APP_MAX_ZIGBEE_DEVICES];
     size_t count = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
         if (!s_devices[i].used || !s_devices[i].supported || !s_devices[i].mapping_confirmed) continue;
         pending[count].addr = s_devices[i].short_addr;
+        memcpy(pending[count].ieee, s_devices[i].ieee_addr, sizeof(esp_zb_ieee_addr_t));
         memcpy(pending[count].eps, s_devices[i].endpoints, sizeof(pending[count].eps));
         count++;
     }
     xSemaphoreGive(s_devices_lock);
     int64_t due_ms = now_ms();
     for (size_t i = 0; i < count; ++i) {
+        pending[i].addr = resolve_short_address(pending[i].ieee, pending[i].addr, "background-poll");
         queue_all_states(pending[i].addr, pending[i].eps, due_ms);
         due_ms += 3 * APP_ZIGBEE_READ_STAGGER_MS;
     }
@@ -880,7 +931,12 @@ static void zigbee_task(void *arg)
     /* This permits a previously joined legacy device to authenticate with the
        well-known key during rejoin. It does not open the network to new joins. */
     ezb_secur_tcpol_set_allow_rejoins_with_well_known_key(true);
-    ESP_LOGI(TAG, "Trust Center legacy rejoin policy enabled");
+    /* QBKG25LM is a no-neutral legacy child and can be quiet for long periods.
+       Do not age it out merely because it has not sent a keepalive recently. */
+    ezb_nwk_set_ed_timeout(EZB_NWK_ED_TIMEOUT_16384MIN);
+    ezb_nwk_set_tx_power(APP_ZIGBEE_TX_POWER_DBM);
+    ESP_LOGI(TAG, "Trust Center legacy rejoin enabled; child timeout=16384min tx_power=%ddBm",
+             APP_ZIGBEE_TX_POWER_DBM);
     esp_zb_set_primary_network_channel_set(APP_ZIGBEE_CHANNEL_MASK);
 
     esp_zb_cluster_list_t *clusters = esp_zb_zcl_cluster_list_create();
@@ -955,18 +1011,24 @@ esp_err_t zigbee_manager_diagnostic_read(uint16_t short_addr)
 {
     if (!s_network_ready || !s_devices_lock) return ESP_ERR_INVALID_STATE;
     uint8_t endpoints[APP_MAX_ZIGBEE_ENDPOINTS] = {0};
+    esp_zb_ieee_addr_t ieee = {0};
     uint8_t count = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(short_addr);
     if (idx >= 0) {
+        memcpy(ieee, s_devices[idx].ieee_addr, sizeof(ieee));
         count = s_devices[idx].onoff_endpoint_count;
         memcpy(endpoints, s_devices[idx].onoff_endpoints, count);
-        for (uint8_t i = 0; i < count; ++i) {
-            zb_state_cache_begin_read(&s_state_cache, short_addr, endpoints[i], now_ms());
-        }
     }
     xSemaphoreGive(s_devices_lock);
     if (!count) return ESP_ERR_NOT_FOUND;
+
+    short_addr = resolve_short_address(ieee, short_addr, "manual-refresh");
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    for (uint8_t i = 0; i < count; ++i) {
+        zb_state_cache_begin_read(&s_state_cache, short_addr, endpoints[i], now_ms());
+    }
+    xSemaphoreGive(s_devices_lock);
 
     int64_t due_ms = now_ms();
     for (uint8_t i = 0; i < count; ++i) {
@@ -1036,17 +1098,22 @@ esp_err_t zigbee_manager_set_channel(uint16_t addr, unsigned channel, bool on)
     if (!s_network_ready || channel > 2) return ESP_ERR_INVALID_ARG;
     uint8_t ep = 0;
     uint32_t generation = 0;
+    esp_zb_ieee_addr_t ieee = {0};
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(addr);
     if (idx >= 0 && s_devices[idx].supported && s_devices[idx].mapping_confirmed) {
+        memcpy(ieee, s_devices[idx].ieee_addr, sizeof(ieee));
         ep = s_devices[idx].endpoints[channel];
         generation = ++s_control_generation[idx][channel];
         if (generation == 0) generation = ++s_control_generation[idx][channel];
-        if (ep) zb_state_cache_begin_read(&s_state_cache, addr, ep, now_ms());
         s_devices[idx].state[channel] = ZB_CHANNEL_UNKNOWN;
     }
     xSemaphoreGive(s_devices_lock);
     if (!ep) return ESP_ERR_NOT_FOUND;
+    addr = resolve_short_address(ieee, addr, "control");
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    zb_state_cache_begin_read(&s_state_cache, addr, ep, now_ms());
+    xSemaphoreGive(s_devices_lock);
     zigbee_io_operation_t operation = {
         .type = ZIGBEE_IO_CONTROL,
         .short_addr = addr,
@@ -1151,4 +1218,18 @@ esp_err_t zigbee_manager_get_endpoint_status(uint16_t short_addr, uint8_t endpoi
     }
     xSemaphoreGive(s_devices_lock);
     return status->known_endpoint ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t zigbee_manager_get_last_seen_age(uint16_t short_addr, int64_t *age_ms)
+{
+    if (!age_ms || !s_devices_lock) return ESP_ERR_INVALID_ARG;
+    *age_ms = -1;
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    int idx = find_device_by_short(short_addr);
+    if (idx >= 0 && s_last_seen_ms[idx] > 0) {
+        int64_t age = now_ms() - s_last_seen_ms[idx];
+        *age_ms = age > 0 ? age : 0;
+    }
+    xSemaphoreGive(s_devices_lock);
+    return idx >= 0 ? ESP_OK : ESP_ERR_NOT_FOUND;
 }

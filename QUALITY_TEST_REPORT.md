@@ -230,5 +230,12 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - 自动测试：存储审计、认证、备份、时间、调度、变体、扩展、RainMaker、Web JavaScript、Zigbee 启动与迁移契约全部 PASS；ESP32-C6 生产 C 测试镜像 BUILD PASS；同一生产 C 逻辑此前在 Espressif QEMU 实际执行 `22/22 PASS`，本轮固件逻辑没有修改这些测试对象。
 - 真实构建：Stage 1～5、CORE、CORE_SENSOR、CORE_CLOUD、FULL 均用 ESP-IDF 5.5.1 + Zigbee 2.0.5 独立 build 目录完成 `build`、`size`、`size-components`。本机 `ccache` 发生 CreateProcess 异常，检查脚本改用 `--no-ccache` 后全部源码构建成功；云端变体从 Espressif 官方组件注册表解析锁定依赖。
 - 实机：升级前 8 MiB 全 Flash 备份校验 PASS；`0.12.0-stage4` 写入 COM10 后，Wi-Fi 配置、PAN `0xDED3` 和 Zigbee 信道15恢复 PASS。D1 无人工干预恢复尚未得到新的 OnOff 回读证据，继续标记 `NOT TESTED`，不能由“PAN 恢复”推导为“设备通信恢复”。
+
+## D1 间歇响应候选修复（2026-11-16）
+
+- 实机证据更新：D1 在 Zigbee 2.0.5 固件上曾短暂自行恢复并返回端点状态，随后再次失去响应，控制命令没有反馈；稳定恢复判定为 `FAIL`，不是 `PASS`。
+- 源码修复：Coordinator 子设备超时调整为 16384 分钟；控制、只读刷新、后台轮询和恢复探测在发送前按 IEEE 地址解析当前短地址；发射功率配置为 20 dBm。Web API 增加最近响应年龄，页面不再仅凭短显示窗口宣称设备“未连接”。
+- 自动验证：Stage 2、Stage 4、FULL 真实构建 PASS；Zigbee 启动/迁移契约及 Web JavaScript 解析 PASS。候选版本为 `0.12.1-stage4`，镜像 SHA-256 为 `246e2818d408bb52285121b2ad20e9d983087fb5189a2081d677c84e85d150e7`。
+- 硬件状态：候选镜像尚未写入。第一次烧录在写 Flash 前因 COM10 被占用而停止，设备数据未被擦除或覆盖。因此长时间通信稳定性、真实 RF 改善和隔夜自动恢复均为 `NOT TESTED`。
 - 已知技术债：当前用 2.0.5 官方 1.x 兼容层完成第一轮安全迁移，编译存在弃用告警；尚未逐项改成全部 2.x 原生 API。该状态为 `PARTIALLY IMPLEMENTED / BUILD PASS`，不是完整原生迁移完成。
 - GitHub Actions 工作流已移除 QEMU 测试数量硬编码，改为匹配测试程序输出的动态计数；本轮只完成本地验证，推送后必须等待 GitHub Actions 实际绿色才能记录 `CI PASS`。

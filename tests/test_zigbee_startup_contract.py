@@ -84,4 +84,21 @@ restored = source.index('ESP_LOGI(TAG, "Restored Zigbee network')
 poll = source.index("poll_persisted_devices();", restored)
 assert restored < poll
 
+# A quiet QBKG25LM end device must not be aged out after the SDK default child
+# timeout.  Every active I/O path also refreshes the current network address
+# from the persisted IEEE address before issuing a request.
+assert "ezb_nwk_set_ed_timeout(EZB_NWK_ED_TIMEOUT_16384MIN)" in source
+assert "ezb_nwk_set_tx_power(APP_ZIGBEE_TX_POWER_DBM)" in source
+assert "ezb_address_short_by_extended" in source
+for reason in ("control", "manual-refresh", "background-poll", "recovery"):
+    assert f'resolve_short_address(ieee, addr, "{reason}")' in source or \
+           f'resolve_short_address(pending[i].ieee, pending[i].addr, "{reason}")' in source or \
+           f'resolve_short_address(ieee, short_addr, "{reason}")' in source
+
+# The Web UI reports evidence age instead of declaring a sleepy device
+# disconnected solely because no packet arrived during a short display window.
+assert "last_seen_age_seconds" in web
+assert "d.last_seen_age_seconds>=0" in page
+assert "最近有响应" in page and "等待设备响应" in page
+
 print("ZIGBEE_STARTUP_CONTRACT_TEST PASS")
