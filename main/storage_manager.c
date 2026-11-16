@@ -192,6 +192,7 @@ esp_err_t storage_manager_factory_reset(const char *confirmation)
 
     const char *nvs_partitions[] = {
         APP_RUNTIME_STORAGE_PARTITION,
+        APP_ZIGBEE_STORAGE_PARTITION,
         APP_IR_STORAGE_PARTITION,
         APP_SENSOR_STORAGE_PARTITION,
         APP_CLOUD_STORAGE_PARTITION,

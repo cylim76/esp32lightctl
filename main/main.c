@@ -21,6 +21,7 @@
 #include "wifi_manager.h"
 #if LIGHTGW_HAS_ZIGBEE
 #include "zigbee_manager.h"
+#include "zigbee_nvram_migration.h"
 #endif
 
 static const char *TAG = "light_gateway";
@@ -44,7 +45,14 @@ void app_main(void)
     ESP_ERROR_CHECK(wifi_manager_start());
     ESP_ERROR_CHECK(time_manager_start());
 #if LIGHTGW_HAS_ZIGBEE
-    ESP_ERROR_CHECK(zigbee_manager_start());
+    err = zigbee_nvram_prepare();
+    if (err == ESP_OK) {
+        ESP_ERROR_CHECK(zigbee_manager_start());
+    } else {
+        diagnostics_set_error(TAG, "Zigbee NVRAM preparation failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Zigbee disabled to preserve NVRAM after migration error: %s",
+                 esp_err_to_name(err));
+    }
 #endif
 #if LIGHTGW_HAS_IR
     err = ir_manager_start();

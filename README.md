@@ -34,7 +34,7 @@
 - Stage 3 的 QBKG25LM 诊断发现模式；Stage 4 的三路映射人工确认门禁、On/Off 控制、初始状态读取、属性上报和命令后回读。
 - Web、调度器和后续云端入口统一经过 Device Control Service；每个命令拥有 ID，并区分 `PENDING`、`SENT`、`CONFIRMED`、`FAILED` 与实际状态 `UNKNOWN`。
 - Zigbee 状态按 IEEE/短地址/端点隔离并记录更新时间；过期、回读超时、设备重新 announce 或短地址复用时，旧 OFF 不得确认本次关灯成功。
-- Zigbee 栈网络数据保存在 `zb_storage` 分区；应用设备表、Wi-Fi 和定时设置保存在 NVS。
+- Zigbee 2.x 栈网络数据保存在 `zigbee_nvs` 分区；升级时从旧 `zb_storage` 非破坏迁移，旧分区保留用于回退。应用设备表、Wi-Fi 和定时设置保存在 NVS。
 - 左/中/右、全部灯光、空调 1、空调 2、空调组各自最多 8 条计划；每条保存目标、启用状态、时分、星期、有限重试及补执行窗口。灯光使用目标端点的明确 OFF，空调只重放已确认保存的 OFF 学习码。
 - DS3231 可选 RTC 使用原生 I²C 驱动，检查 OSF 后才恢复 UTC。系统时间一经 RTC、NTP 或管理员手动设置验证有效，不会因 Wi-Fi 离线而过期；每天北京时间 02:00 尝试 NTP，并在成功后回写 RTC。
 - Web 时间管理区显示北京时间、UTC、来源、有效性、RTC/OSF、最近及下次 NTP；管理员可在无互联网时手动设置 ESP32 与在线的 DS3231。

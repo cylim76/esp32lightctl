@@ -3,11 +3,11 @@
 ## 固定工具链
 
 - ESP-IDF `v5.5.1`
-- ESP Zigbee SDK `esp-zigbee-lib 1.6.8`
-- ZBOSS `esp-zboss-lib 1.6.4`
+- ESP Zigbee SDK `esp-zigbee-lib 2.0.5`
+- ESP Zigbee SDK 2.x 官方 1.x 兼容层暂时启用；不再直接依赖 `esp-zboss-lib`
 - Espressif mDNS `1.14.1`
 - 目标：`esp32c6`，Flash：8 MB
-- 当前源码固件版本：`0.11.0-stageN` / `0.11.0-{core,core_sensor,core_cloud,full}`；原 Stage 1～5 已发布镜像保持不变
+- 当前源码固件版本：`0.12.0-stageN` / `0.12.0-{core,core_sensor,core_cloud,full}`；原 Stage 1～5 已发布镜像保持不变
 
 五个 Stage 使用同一套源码。`LIGHTGW_STAGE` 是 CMake cache 变量，每个 Stage 使用独立的 `build-stageN` 目录和该目录内独立生成的 `sdkconfig`。Stage 5 叠加 `sdkconfig.stage5` 并使用 `partitions_stage5.csv`；Stage 1～4 继续使用原 `partitions.csv`。
 
@@ -215,3 +215,21 @@ ESP32-C6 C 测试镜像为 126,992 B，SHA-256 `e50367269418bd87140b57a407e1ada7
 | FULL | BUILD PASS | 1,886,352 B | 1,744,876 B | 219,816 B | `8f3e7257e1b9e76cc1024709c69928270769222dee69a1bd40c79c4101ebeffb` |
 
 Stage 1 已烧录 ESP32-C6-DevKitC-1-N8 实机并完成启动、Wi-Fi、DHCP、NTP 和持续空闲运行复测。表内其余结果仍仅表示本地软件构建，不代表相应硬件功能通过。
+
+## 2026-11-16 Zigbee SDK 2.0.5 迁移回归（0.12.0）
+
+使用 ESP-IDF 5.5.1、`esp-zigbee-lib 2.0.5` 和最终源码，对五个 Stage 与四种正式变体分别执行真实 `build`、`size`、`size-components`。本机 `ccache` 启动编译器异常，因此自动检查显式使用 `idf.py --no-ccache`；这不改变固件内容。下表仅表示本地软件构建通过。
+
+| 构建 | 应用 `.bin` | Flash non-RAM | 静态 DIRAM | SHA-256 |
+|---|---:|---:|---:|---|
+| Stage 1 | 1,128,208 B | 1,000,900 B | 160,840 B | `d77de467f2c5e02209bb60fd43a8b0e18079f4f19783672accab8ba14617407c` |
+| Stage 2 | 1,384,496 B | 1,248,772 B | 187,398 B | `444972c4d2a079cb7f2dc7bc25b475945b1b29b73230a746a63692721cc58510` |
+| Stage 3 | 1,388,976 B | 1,253,238 B | 187,414 B | `49aaa9616e7fff07c5c010690e8a55853109474a7c80975f1e724eb94c035724` |
+| Stage 4 | 1,403,296 B | 1,267,564 B | 201,766 B | `e7a550ccc086c1ce6237fedfc07d934ff8bd2b97d2529cdbcf1f9ba4c3117115` |
+| Stage 5 | 1,441,184 B | 1,301,132 B | 210,934 B | `87f15412062e63f4718f9e84525f5bcb7bad0ef5de4cc3f41574dfc17e3655ad` |
+| CORE | 1,441,168 B | 1,301,124 B | 210,934 B | `7065a61bd9a6fd140080d6aa74ced26da5afd966fbab0a2ed4c1f3d75543e5b2` |
+| CORE_SENSOR | 1,450,656 B | 1,310,106 B | 212,464 B | `676a2df9019bb10bac9073169800cc441e3e53949191cba0ab96b0d31769e6eb` |
+| CORE_CLOUD | 1,779,920 B | 1,638,456 B | 213,110 B | `706d713b0246a200f4d18cbaaa2e5a701ad94697476385c8f40a34d601bffb6d` |
+| FULL | 1,789,392 B | 1,647,436 B | 214,640 B | `f593df00fd490d1b71b008bb20965214cca3d8224a3f52c9e224cc34b6365d2b` |
+
+实机写入的是同源独立目录 `build-zb2-stage4` 的 `0.12.0-stage4` 镜像，SHA-256 `fb3bbb82bf66a67db0d6429e953d7f4780d4be8d8610b6573619fa2c487fc3eb`。不同 build 目录的构建时间元数据会使镜像 SHA-256 不同；两者不能混用作逐字节相等证明。Zigbee 2.x 兼容层弃用告警、D1 自动恢复、传感器、红外和 RainMaker 真实行为仍需分别硬件验证。

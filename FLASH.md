@@ -87,6 +87,12 @@ idf.py -p COM7 erase-flash
 
 该命令会清除 Wi-Fi、管理凭据、设备诊断、端点映射、Zigbee 网络以及 Stage 5 学习到的红外码，且不可恢复。不要在已有网络上随意执行。
 
+## Zigbee SDK 2.x 升级说明
+
+`0.12.0` 在原分区末尾追加 `zigbee_nvs`，并保留旧 `zb_storage`。从 1.x 固件升级时必须同时写入当前构建目录的 `partition-table.bin` 和应用镜像；启动后固件会尝试一次非破坏 NVRAM 迁移。不要单独用旧分区表搭配 0.12.0 应用，也不要执行 `erase-flash`。
+
+升级前建议先读取完整 8 MiB Flash 作为本机回退备份。迁移成功只代表 Coordinator 网络参数可恢复，不能代替 D1 的真实状态回读和控制测试。若串口显示迁移失败，应停止 Zigbee 测试并保留旧分区，禁止通过全片擦除掩盖错误。
+
 ## 必须保留的日志
 
 从复位第一行开始保存串口输出，至少应包含固件版本/Stage/复位原因、DHCP IPv4、mDNS 主机名、Wi-Fi 断线 reason、Coordinator 建网、Permit Join、设备 announce、`DIAG` 端点/Cluster、控制 TX、状态反馈、Free Heap 和错误信息。编译日志与串口日志应分开归档。

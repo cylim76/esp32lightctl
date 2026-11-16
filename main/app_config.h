@@ -30,6 +30,8 @@
 
 #define APP_NVS_NAMESPACE             "gateway"
 #define APP_RUNTIME_STORAGE_PARTITION "runtime_nvs"
+#define APP_ZIGBEE_STORAGE_PARTITION  "zigbee_nvs"
+#define APP_ZIGBEE_LEGACY_PARTITION   "zb_storage"
 #define APP_TIMEZONE_DEFAULT          "CST-8"
 
 /* DS3231 is optional on every Stage. RTC stores UTC; application uses CST-8. */

@@ -9,18 +9,8 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.6.1~4
-  espressif/esp-zboss-lib:
-    component_hash: 321883d142421f65009972408287441794250057668a11abbdfd8bec77c3309a
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.0'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.6.4
   espressif/esp-zigbee-lib:
-    component_hash: fa0812e6743e2a7d999af9f44ccdcea17ccb1e80f98d6b2956f44687503a88fd
+    component_hash: 84562c41e343152fae8152ea19eb335479230686e96745b65e45e012b7789fc8
     dependencies:
     - name: idf
       require: private
@@ -28,7 +18,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.6.8
+    version: 2.0.5
   espressif/esp_daylight:
     component_hash: e27629eb7e12da9e6d01c646e0e4ce6358b977b6f89d4f291a4cc1aea755af94
     dependencies:
@@ -225,7 +215,7 @@ dependencies:
       type: service
     version: 1.2.0
   espressif/rmaker_console:
-    component_hash: 22f38fe0ec9c84257427dad9a92e09ddbba48a6278eae42b0b167589f0e79f20
+    component_hash: 627c588581909ea68676f100e1ad0643fab7b5402c5d5cc4994785d61fa69326
     dependencies:
     - name: espressif/rmaker_system_ctrl
       registry_url: https://components.espressif.com
@@ -241,7 +231,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.0.1
+    version: 1.1.0
   espressif/rmaker_system_ctrl:
     component_hash: b4208fbc7e99b30fb1d272cbd30e578327079a6495499d12fb466b6c2fc0d899
     dependencies:
@@ -271,7 +261,7 @@ dependencies:
       type: service
     version: 1.0.2
   espressif/rmaker_work_queue:
-    component_hash: 7d2a9ee4e0343eb36e1816e987dde7babe892b99873c8dc5bae15e647a0e4028
+    component_hash: 26f9da268e535e7f01418558fbaa495b03c22e1f7181c57f67b2d4d4492c67d2
     dependencies:
     - name: idf
       require: private
@@ -279,18 +269,17 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.0.0
+    version: 1.1.0
   idf:
     source:
       type: idf
     version: 5.5.1
 direct_dependencies:
-- espressif/esp-zboss-lib
 - espressif/esp-zigbee-lib
 - espressif/esp_rainmaker
 - espressif/mdns
 - espressif/rmaker_common
 - idf
-manifest_hash: 75468a43d084e278b9deb8e8af460e5c39b0a3dd1cadeddda394235a8c3e9a67
+manifest_hash: 45d6ad3416345d97aec61f9de5ee234ba7ac2090290591b5e620567c2345f922
 target: esp32c6
 version: 2.0.0

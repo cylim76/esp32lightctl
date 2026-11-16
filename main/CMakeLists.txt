@@ -23,7 +23,8 @@ set(app_requires
 idf_build_get_property(lightgw_build_variant LIGHTGW_VARIANT_NAME)
 
 if(LIGHTGW_STAGE GREATER_EQUAL 2)
-    list(APPEND app_sources "zigbee_manager.c" "zigbee_state_cache.c")
+    list(APPEND app_sources "zigbee_manager.c" "zigbee_state_cache.c" "zigbee_recovery.c"
+         "zigbee_nvram_migration.c")
 endif()
 if(LIGHTGW_STAGE GREATER_EQUAL 4)
     list(APPEND app_sources "scheduler.c" "scheduler_persistence.c" "device_control.c" "device_state.c")

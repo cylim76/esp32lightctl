@@ -213,3 +213,22 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 实际自动检查：`check-all.bat` PASS；包含存储静态审计、备份恢复、认证、时间管理、交付文档、扩展/RainMaker 契约、调度模拟、网页 JavaScript、C6 C 测试镜像构建，以及 Stage 1～5 和四种正式固件的真实 build/size/size-components。PBKDF2 生产 C 实现使用标准 SHA-256 向量测试。详细体积和 SHA-256 见 `BUILD.md`。
 
 实际硬件检查：Stage 1 烧录、Wi-Fi STA、DHCP、NTP、NVS 配置保留和约 15 分钟空闲资源趋势通过；NTP 修复后未再次崩溃，Free Heap 稳定约 283 KB。mDNS 在固件端发布成功但当前客户端无法解析，记录 FAIL 并保留 IPv4 回退。管理员首次登录迁移、新版数字配网密码以及断线重连仍需实机复测；Zigbee、RTC、红外、传感器和 RainMaker 不因本轮 Stage 1 结果改为硬件 PASS。
+
+## Stage 4 Coordinator 重启恢复改造与实测（2026-11-16）
+
+- 源码版本提升为 `0.11.1-stage4`。新增有界 Zigbee 启动恢复策略：8、20、60、180 秒最多四次状态探测，收到真实 OnOff 属性反馈即取消；Device Update/Announce 会更新短地址、使旧状态失效并重新启动探测。
+- 安全策略启用 Trust Center rejoin 接受；泛化的设备活动不再刷新 OnOff 状态时间，避免公告或旧缓存被误认为本次回读成功。
+- ESP32-C6 Stage 4 真实构建：PASS。应用大小 `0x171e40`，最小应用分区 `0x300000`，约 52% 空闲；应用镜像 SHA-256 `8f651e9337f0dc116cb857a36f703981627b14aac9ea4a2b5e067254aa195084`。
+- 生产 C 测试固件构建：PASS；官方 QEMU 实际执行 `22/22 PASS`，其中包含“重试次数有上限且收到反馈后取消”的恢复测试。`tests/test_zigbee_startup_contract.py` 直接执行 PASS。
+- 实机结果必须拆分记录：Coordinator PAN/信道恢复为 PASS；D1 在最终重启后的无人工干预自动通信恢复为 FAIL。超过4分钟未收到 Device Update/Announce/OnOff，四次探测发送最终失败。一次中间启动收到 secure rejoin 与 Device Announce，只能证明 D1 主动 rejoin 时能够被接受，不能证明每次重启都会自动恢复。
+- 当前 `esp-zigbee-lib 1.6.8` 无公开安全 API 可补写 Coordinator 重启后丢失的 PanCoordinator 位。官方 2.0.4 已列出该项修复，但 2.x API 架构发生破坏性变化；迁移必须在独立分支完成兼容改造、NVRAM 升级和硬件回归，不能把本次有限恢复策略描述为根因已修复。
+
+## Zigbee SDK 2.0.5 非破坏迁移与回归（2026-11-16）
+
+- 确定问题：1.x Coordinator 重启后真实 D1 自动通信恢复失败；官方 2.0.4 发布说明包含 PanCoordinator 位恢复修复。源码升级到 `esp-zigbee-lib 2.0.5`，移除直接 `esp-zboss-lib` 依赖，并将固件版本提升到 `0.12.0`。
+- 数据安全：在旧分区之后追加 `zigbee_nvs`，用官方迁移接口从 `zb_storage` 复制 1.x NVRAM；源分区不擦除、不移动。迁移失败只禁用 Zigbee，不清空 NVS，也不阻止 Core 启动。用户明确恢复出厂设置时才同时擦除两个 Zigbee 分区。
+- 自动测试：存储审计、认证、备份、时间、调度、变体、扩展、RainMaker、Web JavaScript、Zigbee 启动与迁移契约全部 PASS；ESP32-C6 生产 C 测试镜像 BUILD PASS；同一生产 C 逻辑此前在 Espressif QEMU 实际执行 `22/22 PASS`，本轮固件逻辑没有修改这些测试对象。
+- 真实构建：Stage 1～5、CORE、CORE_SENSOR、CORE_CLOUD、FULL 均用 ESP-IDF 5.5.1 + Zigbee 2.0.5 独立 build 目录完成 `build`、`size`、`size-components`。本机 `ccache` 发生 CreateProcess 异常，检查脚本改用 `--no-ccache` 后全部源码构建成功；云端变体从 Espressif 官方组件注册表解析锁定依赖。
+- 实机：升级前 8 MiB 全 Flash 备份校验 PASS；`0.12.0-stage4` 写入 COM10 后，Wi-Fi 配置、PAN `0xDED3` 和 Zigbee 信道15恢复 PASS。D1 无人工干预恢复尚未得到新的 OnOff 回读证据，继续标记 `NOT TESTED`，不能由“PAN 恢复”推导为“设备通信恢复”。
+- 已知技术债：当前用 2.0.5 官方 1.x 兼容层完成第一轮安全迁移，编译存在弃用告警；尚未逐项改成全部 2.x 原生 API。该状态为 `PARTIALLY IMPLEMENTED / BUILD PASS`，不是完整原生迁移完成。
+- GitHub Actions 工作流已移除 QEMU 测试数量硬编码，改为匹配测试程序输出的动态计数；本轮只完成本地验证，推送后必须等待 GitHub Actions 实际绿色才能记录 `CI PASS`。

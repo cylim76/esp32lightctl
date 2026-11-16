@@ -76,6 +76,12 @@
 | HW-439 | Sensor | DS3231+BH1750+SHT31 GPIO6/7 共享总线 | NOT TESTED | — | 检查上拉电压、地址、OSF 与并发恢复 |
 | HW-440 | Variants | CORE 页面显示扩展未包含且按钮禁用 | NOT TESTED | — | Core 控制必须继续正常 |
 | HW-441 | Backup | 禁用传感器时导出、FULL→CORE 导入跳过、回到 FULL 后设置仍保留 | NOT TESTED | — | 软件事务与兼容测试 PASS；真实 NVS/断电待测 |
+| HW-442 | 4 | Coordinator 重启后 D1 无人工干预自动恢复通信 | FAIL | 2026-11-16 / 0.11.1-stage4 | PAN 0xDED3、信道15恢复成功；8/20/60/180秒四次有限探测均执行，但未收到 Device Announce/Device Update/OnOff 反馈，ZCL 发送最终失败。禁止标记为自动恢复成功 |
+| HW-443 | 4 | 升级前完整 8 MiB Flash 备份 | PASS | 2026-11-16 | 已读取并校验 8,388,608 B；SHA-256 `172fa5d50f8aae0b71215c79e3e022a571f221fa5291acfc0974da42fdbec049`，备份只保存在本机忽略目录 |
+| HW-444 | 4 | Zigbee SDK 1.x→2.0.5 NVRAM 非破坏迁移 | PASS | 2026-11-16 / 0.12.0-stage4 | 新 `zigbee_nvs` 初始化和迁移完成；原 `zb_storage` 保留，Coordinator 恢复 PAN `0xDED3`、信道15；未执行全片擦除 |
+| HW-445 | 4 | Zigbee 2.0.5 升级后 Wi-Fi/NVS 保留 | PASS | 2026-11-16 / 0.12.0-stage4 | 固件启动并恢复原 STA 配置；串口确认应用版本和分区表正常 |
+| HW-446 | 4 | Zigbee 2.0.5 升级后 D1 无人工干预自动恢复通信 | NOT TESTED | 2026-11-16 / 0.12.0-stage4 | Coordinator 网络已恢复；COM10 主机驱动失去响应且测试电脑当前无法直连设备 IP，尚无真实 OnOff 回读证据。不得把网络恢复当作 D1 恢复成功 |
+| HW-447 | 4 | COM10 长时间串口监视稳定性 | FAIL | 2026-11-16 | Windows CP210x 设备出现错误 121/端口短暂消失；属于主机 USB/驱动链路问题，不据此判定 ESP32 固件崩溃 |
 
 状态变更时必须附串口日志文件名、测试条件和可复现步骤；FAIL 不得删除，应追加修复版本和复测结果。
 
@@ -114,3 +120,21 @@
 - 启动确认应用版本 `0.11.0-stage4`、8 MiB Flash、Wi-Fi 配置及 DHCP 地址 `192.168.1.197` 均正常恢复；NTP 再次同步成功。
 - Coordinator 恢复 PAN `0xDD9F`、信道15，并读取到已保存的未确认设备 `0x56FC`。启动时的自动端点重发现因设备未应答而超时，不覆盖此前保存的有效端点诊断数据。
 - 本次只验证 Stage 4 安全升级与启动恢复，没有保存三路映射，也没有发送 ON/OFF；`HW-301`～`HW-309` 继续保持 `NOT TESTED`。
+
+## 2026-11-16 Stage 4 D1 重启恢复复测
+
+- 测试板：乐鑫 ESP32-C6-DevKitC-1-N8，USB 串口 COM10，STA MAC `ac:eb:e6:d3:a9:a0`；固件 `0.11.1-stage4`，应用镜像 SHA-256 `8f651e9337f0dc116cb857a36f703981627b14aac9ea4a2b5e067254aa195084`。刷写只更新应用镜像，未擦除 NVS 或 Zigbee 存储。
+- Coordinator 恢复结果：PASS。串口确认恢复 PAN `0xDED3`、信道15，并启用 Trust Center rejoin 接受策略。
+- 新恢复逻辑：在启动后 8、20、60、180 秒对已保存设备执行最多四次状态探测；收到真实 OnOff 属性反馈后立即停止。该策略不会无限发送，不会把旧缓存状态当成本次成功。
+- 中间一次启动曾收到 `Device update short=0xc1e1 status=0 tc_action=0 parent=0x0000` 和 `Device announce short=0xc1e1`，随后型号读取成功，证明当 D1 主动发起 secure rejoin 时 Coordinator 可以接受并更新短地址。
+- 最终干净重启复测：FAIL。持续监视超过4分钟，四次探测均执行，但没有收到 D1 的 Device Update、Device Announce 或 OnOff 状态反馈，发送最终返回 `ESP_FAIL`。因此“Coordinator 网络恢复”和“D1 自动恢复通信”必须分别判定，后者尚未解决。
+- 本轮首次复测时依赖为 `esp-zigbee-lib 1.6.8` / `esp-zboss-lib 1.6.4`。官方 2.0.4 发布说明包含 Coordinator 重启后 PanCoordinator 位丢失修复，因此随后在独立迁移分支升级并保留本固件和完整 Flash 备份作为回退。
+
+## 2026-11-16 Zigbee SDK 2.0.5 迁移与刷机记录
+
+- 当前实机固件：`0.12.0-stage4`，应用镜像 `build-zb2-stage4/esp32c6_light_gateway.bin`，SHA-256 `fb3bbb82bf66a67db0d6429e953d7f4780d4be8d8610b6573619fa2c487fc3eb`。
+- 升级前完成 8 MiB 全 Flash 备份并验证 SHA-256；备份文件位于被 Git 忽略的本机目录，不上传仓库。
+- 新分区表在原分区末尾追加 `zigbee_nvs`，没有移动或覆盖原 `nvs`、factory app、`zb_storage`、coredump 和 `ir_data`。迁移失败时只禁用 Zigbee，Core 的 Wi-Fi/Web/手动诊断继续启动；代码不会自动擦除旧数据。
+- 串口已确认 `zigbee_nvs` 准备完成、Coordinator 恢复 PAN `0xDED3` 和信道15、Wi-Fi STA 配置保留。以上仅证明栈数据迁移和网络恢复，不证明 D1 已恢复应用通信。
+- 当前使用 2.0.5 官方 1.x 兼容层完成第一轮实机迁移，编译会产生弃用告警；后续仍需逐项改为 2.x 原生 API。此技术债不影响回退，但不得把“能编译/能建网”描述为完整原生 2.x 迁移完成。
+- COM10 的 CP210x 主机端口在监视期间再次短暂失去响应，且测试电脑不在设备当前局域网，因而 D1 自动重连项目保持 `NOT TESTED`。必须看到新的 OnOff 回读或实际控制反馈后才能改为 PASS。

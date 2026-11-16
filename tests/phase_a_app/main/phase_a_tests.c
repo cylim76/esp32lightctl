@@ -12,6 +12,7 @@
 #include "scheduler_persistence.h"
 #include "sht31_protocol.h"
 #include "zigbee_state_cache.h"
+#include "zigbee_recovery.h"
 
 static const uint8_t IEEE_A[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 static const uint8_t IEEE_B[8] = {8, 7, 6, 5, 4, 3, 2, 1};
@@ -199,6 +200,28 @@ static void test_short_address_reuse_isolated(void)
     zb_state_cache_entry_t state;
     CHECK(zb_state_cache_get(&cache, 0x1111, 1, 20, &state));
     CHECK(!state.valid && memcmp(state.ieee, IEEE_B, 8) == 0);
+}
+
+static void test_zigbee_recovery_is_bounded_and_cancelled_by_feedback(void)
+{
+    zigbee_recovery_state_t recovery = {0};
+    uint8_t attempt = 0xff;
+    zigbee_recovery_begin(&recovery, 1000);
+    CHECK(!zigbee_recovery_take_due(&recovery, 8999, 0, &attempt));
+    CHECK(zigbee_recovery_take_due(&recovery, 9000, 0, &attempt) && attempt == 0);
+    CHECK(!zigbee_recovery_take_due(&recovery, 20999, 0, &attempt));
+    CHECK(zigbee_recovery_take_due(&recovery, 21000, 0, &attempt) && attempt == 1);
+    zigbee_recovery_note_response(&recovery, 21001);
+    CHECK(!recovery.active);
+    CHECK(!zigbee_recovery_take_due(&recovery, 999999, 0, &attempt));
+
+    zigbee_recovery_begin(&recovery, 2000);
+    CHECK(zigbee_recovery_take_due(&recovery, 10000, 0, &attempt) && attempt == 0);
+    CHECK(zigbee_recovery_take_due(&recovery, 22000, 0, &attempt) && attempt == 1);
+    CHECK(zigbee_recovery_take_due(&recovery, 62000, 0, &attempt) && attempt == 2);
+    CHECK(zigbee_recovery_take_due(&recovery, 182000, 0, &attempt) && attempt == 3);
+    CHECK(!recovery.active);
+    CHECK(!zigbee_recovery_take_due(&recovery, 500000, 0, &attempt));
 }
 
 static void test_command_lifecycle(void)
@@ -430,6 +453,7 @@ void app_main(void)
     RUN(test_repair_invalidates_generation);
     RUN(test_fresh_feedback_after_timeout_recovers);
     RUN(test_short_address_reuse_isolated);
+    RUN(test_zigbee_recovery_is_bounded_and_cancelled_by_feedback);
     RUN(test_command_lifecycle);
     RUN(test_command_ring_rejects_inflight_overwrite);
     RUN(test_scheduler_unchanged_write_is_skipped);

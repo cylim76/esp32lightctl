@@ -16,7 +16,9 @@
 #include "stage_config.h"
 #include "storage_manager.h"
 #include "zigbee_state_cache.h"
+#include "zigbee_recovery.h"
 #include "zcl/esp_zigbee_zcl_command.h"
+#include "ezbee/secur.h"
 
 static const char *TAG = "zigbee";
 static SemaphoreHandle_t s_devices_lock;
@@ -27,6 +29,8 @@ static bool s_network_ready;
 static int64_t s_pairing_until_us;
 static zb_state_cache_t s_state_cache;
 static int64_t s_last_seen_ms[APP_MAX_ZIGBEE_DEVICES];
+static int64_t s_last_state_seen_ms[APP_MAX_ZIGBEE_DEVICES];
+static zigbee_recovery_state_t s_recovery[APP_MAX_ZIGBEE_DEVICES];
 static uint32_t s_control_generation[APP_MAX_ZIGBEE_DEVICES][3];
 static QueueHandle_t s_zigbee_io_queue;
 
@@ -97,6 +101,8 @@ static void load_devices(void)
 {
     s_device_storage_healthy = true;
     memset(s_last_seen_ms, 0, sizeof(s_last_seen_ms));
+    memset(s_last_state_seen_ms, 0, sizeof(s_last_state_seen_ms));
+    memset(s_recovery, 0, sizeof(s_recovery));
     memset(s_control_generation, 0, sizeof(s_control_generation));
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
         s_devices[i].state[0] = s_devices[i].state[1] = s_devices[i].state[2] = ZB_CHANNEL_UNKNOWN;
@@ -241,6 +247,7 @@ static void poll_persisted_devices(void)
                                                  s_devices[i].short_addr, s_devices[i].endpoints[ch]);
             }
             count++;
+            zigbee_recovery_begin(&s_recovery[i], now_ms());
         } else if (s_devices[i].used && s_devices[i].short_addr != 0) {
             rediscover[rediscover_count].addr = s_devices[i].short_addr;
             memcpy(rediscover[rediscover_count].ieee, s_devices[i].ieee_addr,
@@ -260,9 +267,7 @@ static void poll_persisted_devices(void)
             };
             queue_operation(&config);
         }
-        queue_all_states(pending[i].addr, pending[i].eps,
-                         due_ms + 3 * APP_ZIGBEE_READ_STAGGER_MS);
-        due_ms += 6 * APP_ZIGBEE_READ_STAGGER_MS;
+        due_ms += 3 * APP_ZIGBEE_READ_STAGGER_MS;
     }
 #if LIGHTGW_HAS_DISCOVERY
     for (size_t i = 0; i < rediscover_count; ++i) {
@@ -271,6 +276,30 @@ static void poll_persisted_devices(void)
         discover_device(rediscover[i].addr, rediscover[i].ieee);
     }
 #endif
+}
+
+static void queue_due_recovery_polls(void)
+{
+    struct { uint16_t addr; uint8_t eps[3]; uint8_t attempt; } pending[APP_MAX_ZIGBEE_DEVICES];
+    size_t count = 0;
+    int64_t now = now_ms();
+    xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+    for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
+        uint8_t attempt = 0;
+        if (!s_devices[i].used || !s_devices[i].supported || !s_devices[i].mapping_confirmed) continue;
+        if (!zigbee_recovery_take_due(&s_recovery[i], now, s_last_state_seen_ms[i], &attempt)) continue;
+        pending[count].addr = s_devices[i].short_addr;
+        memcpy(pending[count].eps, s_devices[i].endpoints, sizeof(pending[count].eps));
+        pending[count].attempt = attempt;
+        count++;
+    }
+    xSemaphoreGive(s_devices_lock);
+
+    for (size_t i = 0; i < count; ++i) {
+        ESP_LOGI(TAG, "Recovery probe %u/%u short=0x%04x",
+                 pending[i].attempt + 1, ZIGBEE_RECOVERY_MAX_ATTEMPTS, pending[i].addr);
+        queue_all_states(pending[i].addr, pending[i].eps, now);
+    }
 }
 
 static void send_config_report(uint16_t addr, uint8_t endpoint)
@@ -415,6 +444,7 @@ static void zigbee_io_task(void *arg)
     (void)arg;
     size_t pending_count = 0;
     int64_t next_poll_ms = now_ms() + APP_ZIGBEE_STATE_POLL_MS;
+    int64_t next_recovery_check_ms = now_ms();
     for (;;) {
         zigbee_io_operation_t incoming;
         while (pending_count < ZIGBEE_IO_PENDING_CAPACITY &&
@@ -422,6 +452,10 @@ static void zigbee_io_task(void *arg)
             s_pending_operations[pending_count++] = incoming;
         }
         int64_t now = now_ms();
+        if (s_network_ready && now >= next_recovery_check_ms) {
+            queue_due_recovery_polls();
+            next_recovery_check_ms = now + 250;
+        }
         if (s_network_ready && now >= next_poll_ms) {
             queue_background_poll();
             next_poll_ms = now + APP_ZIGBEE_STATE_POLL_MS;
@@ -629,6 +663,8 @@ static void update_onoff(uint16_t addr, uint8_t endpoint, bool on, int8_t rssi)
         }
         s_devices[idx].online = true;
         s_last_seen_ms[idx] = now_ms();
+        s_last_state_seen_ms[idx] = s_last_seen_ms[idx];
+        zigbee_recovery_note_response(&s_recovery[idx], s_last_state_seen_ms[idx]);
         if (rssi != 0) s_devices[idx].last_rssi = rssi;
     }
     xSemaphoreGive(s_devices_lock);
@@ -774,12 +810,45 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
             s_devices[prior].online = true;
             s_last_seen_ms[prior] = now_ms();
             s_devices[prior].state[0] = s_devices[prior].state[1] = s_devices[prior].state[2] = ZB_CHANNEL_UNKNOWN;
+            zigbee_recovery_begin(&s_recovery[prior], now_ms());
             save_devices();
         }
         xSemaphoreGive(s_devices_lock);
         discover_device(d->device_short_addr, d->ieee_addr);
 #else
         ESP_LOGI(TAG, "Stage 2 records join only; endpoint discovery is enabled in Stage 3");
+#endif
+        break;
+    }
+    case ESP_ZB_ZDO_SIGNAL_DEVICE_UPDATE: {
+        esp_zb_zdo_signal_device_update_params_t *d = esp_zb_app_signal_get_params(p);
+        if (!d) break;
+        ESP_LOGI(TAG, "Device update short=0x%04x status=%u tc_action=%u parent=0x%04x",
+                 d->short_addr, d->status, d->tc_action, d->parent_short);
+#if LIGHTGW_HAS_DISCOVERY
+        xSemaphoreTake(s_devices_lock, portMAX_DELAY);
+        int prior = find_device_by_ieee(d->long_addr);
+        if (prior >= 0) {
+            if (d->status == ESP_ZB_ZDO_STANDARD_DEV_DEVICE_LEFT ||
+                d->tc_action == ESP_ZB_ZDO_TC_ACTION_DENY) {
+                s_devices[prior].online = false;
+                s_last_seen_ms[prior] = 0;
+                s_devices[prior].state[0] = s_devices[prior].state[1] = s_devices[prior].state[2] = ZB_CHANNEL_UNKNOWN;
+                s_recovery[prior].active = false;
+            } else if (d->tc_action == ESP_ZB_ZDO_TC_ACTION_AUTHORIZE) {
+                bool address_changed = s_devices[prior].short_addr != d->short_addr;
+                s_devices[prior].short_addr = d->short_addr;
+                s_devices[prior].online = true;
+                s_last_seen_ms[prior] = now_ms();
+                s_devices[prior].state[0] = s_devices[prior].state[1] = s_devices[prior].state[2] = ZB_CHANNEL_UNKNOWN;
+                zb_state_cache_device_announced(&s_state_cache, d->long_addr, d->short_addr, now_ms());
+                zigbee_recovery_begin(&s_recovery[prior], now_ms());
+                if (address_changed) save_devices();
+            }
+        }
+        xSemaphoreGive(s_devices_lock);
+#else
+        ESP_LOGI(TAG, "Stage 2 records device update only; persisted mapping recovery starts in Stage 3");
 #endif
         break;
     }
@@ -796,12 +865,22 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal)
 static void zigbee_task(void *arg)
 {
     (void)arg;
-    esp_zb_cfg_t cfg = {
-        .esp_zb_role = ESP_ZB_DEVICE_TYPE_COORDINATOR,
-        .install_code_policy = false,
-        .nwk_cfg.zczr_cfg = {.max_children = APP_COORDINATOR_MAX_CHILDREN},
+    const esp_zigbee_config_t cfg = {
+        .device_config = {
+            .device_type = EZB_NWK_DEVICE_TYPE_COORDINATOR,
+            .install_code_policy = false,
+            .zczr_config = {.max_children = APP_COORDINATOR_MAX_CHILDREN},
+        },
+        .platform_config = {
+            .storage_partition_name = APP_ZIGBEE_STORAGE_PARTITION,
+            .radio_config = {.radio_mode = ESP_ZIGBEE_RADIO_MODE_NATIVE},
+        },
     };
-    esp_zb_init(&cfg);
+    ESP_ERROR_CHECK(esp_zigbee_init(&cfg));
+    /* This permits a previously joined legacy device to authenticate with the
+       well-known key during rejoin. It does not open the network to new joins. */
+    ezb_secur_tcpol_set_allow_rejoins_with_well_known_key(true);
+    ESP_LOGI(TAG, "Trust Center legacy rejoin policy enabled");
     esp_zb_set_primary_network_channel_set(APP_ZIGBEE_CHANNEL_MASK);
 
     esp_zb_cluster_list_t *clusters = esp_zb_zcl_cluster_list_create();
@@ -835,11 +914,6 @@ esp_err_t zigbee_manager_start(void)
     if (!s_zigbee_io_queue) return ESP_ERR_NO_MEM;
     zb_state_cache_init(&s_state_cache, APP_ZIGBEE_STATE_MAX_AGE_MS, APP_ZIGBEE_READ_TIMEOUT_MS);
     load_devices();
-    esp_zb_platform_config_t platform = {
-        .radio_config = {.radio_mode = ZB_RADIO_MODE_NATIVE},
-        .host_config = {.host_connection_mode = ZB_HOST_CONNECTION_MODE_NONE},
-    };
-    ESP_RETURN_ON_ERROR(esp_zb_platform_config(&platform), TAG, "Zigbee platform config");
     esp_coex_wifi_i154_enable();
     diagnostics_record_memory_event("zigbee_starting");
     if (xTaskCreate(zigbee_task, "zigbee_main", 8192, NULL, 5, NULL) != pdPASS) {

@@ -18,6 +18,7 @@ python tests\test_backup_contract.py || exit /b 1
 python tests\test_auth_contract.py || exit /b 1
 python tests\test_time_manager_contract.py || exit /b 1
 python tests\test_zigbee_startup_contract.py || exit /b 1
+python tests\test_zigbee_migration_contract.py || exit /b 1
 python tests\test_backup_restore.py || exit /b 1
 python tests\test_ci_workflow.py || exit /b 1
 python tests\test_delivery_docs.py || exit /b 1
@@ -27,24 +28,24 @@ python tests\simulate_time_scheduler.py || exit /b 1
 
 if defined NODE_EXE goto have_node
 where node >nul 2>nul || goto no_node
-set "NODE_EXE=node"
+if not defined NODE_EXE set "NODE_EXE=node"
 :have_node
 "%NODE_EXE%" tests\check_web_js.js || exit /b 1
 
 pushd tests\phase_a_app
-idf.py -B build-quality-c6 -DIDF_TARGET=esp32c6 build || (popd & exit /b 1)
+idf.py --no-ccache -B build-quality-c6 -DIDF_TARGET=esp32c6 build || (popd & exit /b 1)
 popd
 
 for %%S in (1 2 3 4 5) do (
-  idf.py -B build-quality-stage%%S -D LIGHTGW_STAGE=%%S build || exit /b 1
-  idf.py -B build-quality-stage%%S size || exit /b 1
-  idf.py -B build-quality-stage%%S size-components || exit /b 1
+  idf.py --no-ccache -B build-quality-stage%%S -D LIGHTGW_STAGE=%%S build || exit /b 1
+  idf.py --no-ccache -B build-quality-stage%%S size || exit /b 1
+  idf.py --no-ccache -B build-quality-stage%%S size-components || exit /b 1
 )
 
 for %%V in (CORE CORE_SENSOR CORE_CLOUD FULL) do (
-  idf.py -B build-quality-variant-%%V -D LIGHTGW_VARIANT=%%V build || exit /b 1
-  idf.py -B build-quality-variant-%%V size || exit /b 1
-  idf.py -B build-quality-variant-%%V size-components || exit /b 1
+  idf.py --no-ccache -B build-quality-variant-%%V -D LIGHTGW_VARIANT=%%V build || exit /b 1
+  idf.py --no-ccache -B build-quality-variant-%%V size || exit /b 1
+  idf.py --no-ccache -B build-quality-variant-%%V size-components || exit /b 1
 )
 
 python tests\report_build_metrics.py || exit /b 1
