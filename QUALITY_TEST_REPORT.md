@@ -236,6 +236,7 @@ QEMU 测试直接编译生产文件 `zigbee_state_cache.c`、`device_state.c` �
 - 实机证据更新：D1 在 Zigbee 2.0.5 固件上曾短暂自行恢复并返回端点状态，随后再次失去响应，控制命令没有反馈；稳定恢复判定为 `FAIL`，不是 `PASS`。
 - 源码修复：Coordinator 子设备超时调整为 16384 分钟；控制、只读刷新、后台轮询和恢复探测在发送前按 IEEE 地址解析当前短地址；发射功率配置为 20 dBm。Web API 增加最近响应年龄，页面不再仅凭短显示窗口宣称设备“未连接”。
 - 自动验证：Stage 2、Stage 4、FULL 真实构建 PASS；Zigbee 启动/迁移契约及 Web JavaScript 解析 PASS。候选版本为 `0.12.1-stage4`，镜像 SHA-256 为 `246e2818d408bb52285121b2ad20e9d983087fb5189a2081d677c84e85d150e7`。
-- 硬件状态：候选镜像尚未写入。第一次烧录在写 Flash 前因 COM10 被占用而停止，设备数据未被擦除或覆盖。因此长时间通信稳定性、真实 RF 改善和隔夜自动恢复均为 `NOT TESTED`。
+- 硬件状态：最终 `0.12.1-stage4` 镜像已非擦除写入 COM10，SHA-256 为 `15bb22b5b2b5bbc8ed164a2e4ea9fd37a7c100b4877392b3b48718313c0d3a07`。启动恢复 PAN `0xDED3`/信道15，D1 无需长按配对即在约6.8秒后 Announce；ep1/2/3 重新发现，三路 reporting 配置均返回成功。本次重启自动恢复 `HARDWARE PASS`；15分钟、隔夜、定时关闭及 RF 长期稳定性仍为 `NOT TESTED`。
+- Web 状态显示：只有新鲜有效的 Zigbee 回读才点亮对应按钮——开启为亮绿色、关闭为亮红色；未知、刷新中、超时或过期缓存不高亮。JavaScript 解析及 Zigbee 页面契约 `SOFTWARE TEST PASS`，实机视觉复核待用户完成。
 - 已知技术债：当前用 2.0.5 官方 1.x 兼容层完成第一轮安全迁移，编译存在弃用告警；尚未逐项改成全部 2.x 原生 API。该状态为 `PARTIALLY IMPLEMENTED / BUILD PASS`，不是完整原生迁移完成。
 - GitHub Actions 工作流已移除 QEMU 测试数量硬编码，改为匹配测试程序输出的动态计数；本轮只完成本地验证，推送后必须等待 GitHub Actions 实际绿色才能记录 `CI PASS`。

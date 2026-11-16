@@ -33,6 +33,11 @@ assert "const names=['出口','企划','会议室']" in page
 assert "scheduleTargets=['出口照明','企划照明','会议室照明'" in page
 assert ".switches{grid-template-columns:repeat(3,minmax(0,1fr))" in page
 assert "on.textContent='开'" in page and "off.textContent='关'" in page
+assert "knownOn=x.valid&&d.states[i]===1" in page
+assert "knownOff=x.valid&&d.states[i]===0" in page
+assert "turn-on${knownOn?' state-active':''}" in page
+assert "turn-off${knownOff?' state-active':''}" in page
+assert ".turn-on.state-active" in page and ".turn-off.state-active" in page
 assert "on.onclick=()=>setSwitch(d.short,i,true)" in page
 assert "off.onclick=()=>setSwitch(d.short,i,false)" in page
 assert 'class="channel-state ${statusClass}"' in page
