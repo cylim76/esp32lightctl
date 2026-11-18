@@ -70,6 +70,9 @@ Build success does not count as Router or Aqara hardware success.
 
 ## Build artifact record (2026-11-18)
 
+The same three verified binaries are retained under `firmware/router/`, so a
+future recovery does not require rebuilding the Router source first.
+
 | File | Address | Size | SHA-256 |
 |---|---:|---:|---|
 | `bootloader/bootloader.bin` | `0x0000` | 22,496 B | `330420aba17931e3177ead517349b2a984e0f241467d49a6a0b02da058a470ca` |

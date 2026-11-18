@@ -25,12 +25,26 @@ if exist "%~dp0router_firmware\managed_components\espressif__esp-zigbee-lib\CMak
 )
 if /I "%MODE%"=="fresh" goto fresh
 echo Flashing Router firmware without erasing existing data on %PORT%...
-idf.py --no-ccache -D "CMAKE_MAKE_PROGRAM=%NINJA_EXE%" -D "ROUTER_TOOLCHAIN_BIN=%RISCV_BIN%" -C router_firmware -B build-router -p %PORT% flash
+if exist "build-router\esp32c6_zigbee_router.bin" (
+  idf.py --no-ccache -D "CMAKE_MAKE_PROGRAM=%NINJA_EXE%" -D "ROUTER_TOOLCHAIN_BIN=%RISCV_BIN%" -C router_firmware -B build-router -p %PORT% flash
+) else if exist "firmware\router\esp32c6_zigbee_router.bin" (
+  python -m esptool --chip esp32c6 -p %PORT% -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 firmware\router\bootloader.bin 0x8000 firmware\router\partition-table.bin 0x10000 firmware\router\esp32c6_zigbee_router.bin
+) else (
+  goto no_build
+)
 exit /b %errorlevel%
 
 :fresh
 echo WARNING: fresh mode erases the entire connected board before installing Router firmware.
-idf.py --no-ccache -D "CMAKE_MAKE_PROGRAM=%NINJA_EXE%" -D "ROUTER_TOOLCHAIN_BIN=%RISCV_BIN%" -C router_firmware -B build-router -p %PORT% erase-flash flash
+if exist "build-router\esp32c6_zigbee_router.bin" (
+  idf.py --no-ccache -D "CMAKE_MAKE_PROGRAM=%NINJA_EXE%" -D "ROUTER_TOOLCHAIN_BIN=%RISCV_BIN%" -C router_firmware -B build-router -p %PORT% erase-flash flash
+) else if exist "firmware\router\esp32c6_zigbee_router.bin" (
+  python -m esptool --chip esp32c6 -p %PORT% --before default_reset erase_flash
+  if errorlevel 1 exit /b %errorlevel%
+  python -m esptool --chip esp32c6 -p %PORT% -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 firmware\router\bootloader.bin 0x8000 firmware\router\partition-table.bin 0x10000 firmware\router\esp32c6_zigbee_router.bin
+) else (
+  goto no_build
+)
 exit /b %errorlevel%
 
 :usage
@@ -49,3 +63,7 @@ exit /b 4
 :no_toolchain
 echo ERROR: ESP32-C6 RISC-V compiler was not found in the ESP-IDF environment.
 exit /b 5
+
+:no_build
+echo ERROR: neither build-router nor firmware\router contains a complete Router image.
+exit /b 6

@@ -174,6 +174,8 @@ flash-router.bat COM8
 monitor-router.bat COM8
 ```
 
+仓库的 `firmware/router/` 同时保存了本次验证构建的三个预编译文件及 SHA-256；因此只需要恢复现有 Router 时，可下载仓库后直接执行 `flash-router.bat COM8`。脚本优先使用本机构建目录，没有构建目录时自动使用预编译文件。
+
 只有第一次把一块普通/旧网关开发板转换成 Router 时才使用：
 
 ```bat
@@ -188,9 +190,9 @@ flash-router.bat COM8 fresh
 
 | 地址 | 主网关 Stage 4 | Zigbee Router |
 |---:|---|---|
-| `0x0000` | `build-stage4/bootloader/bootloader.bin` | `build-router/bootloader/bootloader.bin` |
-| `0x8000` | `build-stage4/partition_table/partition-table.bin` | `build-router/partition_table/partition-table.bin` |
-| `0x10000` | `build-stage4/esp32c6_light_gateway.bin` | `build-router/esp32c6_zigbee_router.bin` |
+| `0x0000` | `build-stage4/bootloader/bootloader.bin` | `firmware/router/bootloader.bin` |
+| `0x8000` | `build-stage4/partition_table/partition-table.bin` | `firmware/router/partition-table.bin` |
+| `0x10000` | `build-stage4/esp32c6_light_gateway.bin` | `firmware/router/esp32c6_zigbee_router.bin` |
 
 建议参数：ESP32-C6、8 MB、DIO、80 MHz、460800 baud；线材或串口不稳定时降为 115200 baud。烧录地址由当前分区表确定，若以后分区表变更，应以对应构建目录中的 `flash_args` 为准，不要凭经验猜测地址。
 
