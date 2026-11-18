@@ -13,6 +13,13 @@
 
 ## Windows 环境
 
+备用 ESP32-C6 的专用 Zigbee Router 是独立子工程，不属于 Stage 1～5 或
+四种正式变体。构建与实测边界见 [ZIGBEE_ROUTER.md](ZIGBEE_ROUTER.md)：
+
+```bat
+build-router.bat
+```
+
 ```bat
 cd C:\esp\esp-idf-v5.5.1
 export.bat

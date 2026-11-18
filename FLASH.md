@@ -9,6 +9,16 @@
 
 ## 推荐命令
 
+备用板改作 Zigbee Router 时使用独立命令，首次转换必须确认 COM 端口确实
+属于备用板；`fresh` 会清除该板全部 Flash：
+
+```bat
+flash-router.bat COM7 fresh
+monitor-router.bat COM7
+```
+
+主网关禁止执行上述 `fresh`。详细入网步骤见 [ZIGBEE_ROUTER.md](ZIGBEE_ROUTER.md)。
+
 ```bat
 flash.bat COM7 1
 monitor.bat COM7 1

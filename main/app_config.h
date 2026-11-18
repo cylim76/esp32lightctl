@@ -10,6 +10,9 @@
 #define APP_ZIGBEE_STATE_MAX_AGE_MS   360000
 #define APP_ZIGBEE_READ_TIMEOUT_MS    8000
 #define APP_ZIGBEE_STATE_POLL_MS      60000
+/* Web-only display hold: keep the last confirmed value across two polling
+ * intervals plus jitter. This must never be used to confirm a control. */
+#define APP_ZIGBEE_DISPLAY_HOLD_MS    150000
 #define APP_ZIGBEE_RECOVERY_DELAY_MS  8000
 #define APP_ZIGBEE_READ_STAGGER_MS    350
 #define APP_ZIGBEE_CONTROL_READ_DELAY_MS 700
@@ -62,6 +65,8 @@
 #define APP_BACKUP_UPLOAD_MIN_INTERVAL_MS 10000
 
 #define AQARA_MODEL_ID                "lumi.switch.l3acn3"
+#define LIGHTGW_ROUTER_MODEL_ID       "ESP32-C6-Zigbee-Router"
+#define LIGHTGW_ROUTER_LEGACY_MODEL_ID "LightGW-ZR-C6"
 #define AQARA_CLUSTER_LUMI            0xFCC0
 #define AQARA_ATTR_MODE               0x0009
 #define AQARA_MANUFACTURER_CODE       0x115F

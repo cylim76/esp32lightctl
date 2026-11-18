@@ -472,14 +472,24 @@ static void execute_io_operation(const zigbee_io_operation_t *operation)
 static void queue_background_poll(void)
 {
     struct { uint16_t addr; esp_zb_ieee_addr_t ieee; uint8_t eps[3]; } pending[APP_MAX_ZIGBEE_DEVICES];
+    struct { uint16_t addr; esp_zb_ieee_addr_t ieee; } routers[APP_MAX_ZIGBEE_DEVICES];
     size_t count = 0;
+    size_t router_count = 0;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     for (size_t i = 0; i < APP_MAX_ZIGBEE_DEVICES; ++i) {
-        if (!s_devices[i].used || !s_devices[i].supported || !s_devices[i].mapping_confirmed) continue;
-        pending[count].addr = s_devices[i].short_addr;
-        memcpy(pending[count].ieee, s_devices[i].ieee_addr, sizeof(esp_zb_ieee_addr_t));
-        memcpy(pending[count].eps, s_devices[i].endpoints, sizeof(pending[count].eps));
-        count++;
+        if (!s_devices[i].used) continue;
+        if (strcmp(s_devices[i].model, LIGHTGW_ROUTER_MODEL_ID) == 0 ||
+            strcmp(s_devices[i].model, LIGHTGW_ROUTER_LEGACY_MODEL_ID) == 0) {
+            routers[router_count].addr = s_devices[i].short_addr;
+            memcpy(routers[router_count].ieee, s_devices[i].ieee_addr,
+                   sizeof(esp_zb_ieee_addr_t));
+            router_count++;
+        } else if (s_devices[i].supported && s_devices[i].mapping_confirmed) {
+            pending[count].addr = s_devices[i].short_addr;
+            memcpy(pending[count].ieee, s_devices[i].ieee_addr, sizeof(esp_zb_ieee_addr_t));
+            memcpy(pending[count].eps, s_devices[i].endpoints, sizeof(pending[count].eps));
+            count++;
+        }
     }
     xSemaphoreGive(s_devices_lock);
     int64_t due_ms = now_ms();
@@ -487,6 +497,13 @@ static void queue_background_poll(void)
         pending[i].addr = resolve_short_address(pending[i].ieee, pending[i].addr, "background-poll");
         queue_all_states(pending[i].addr, pending[i].eps, due_ms);
         due_ms += 3 * APP_ZIGBEE_READ_STAGGER_MS;
+    }
+    for (size_t i = 0; i < router_count; ++i) {
+        routers[i].addr = resolve_short_address(routers[i].ieee, routers[i].addr,
+                                                "router-heartbeat");
+        queue_read(routers[i].addr, 1, ESP_ZB_ZCL_CLUSTER_ID_BASIC,
+                   ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, due_ms);
+        due_ms += APP_ZIGBEE_READ_STAGGER_MS;
     }
 }
 
@@ -750,17 +767,29 @@ static void handle_read_response(const esp_zb_zcl_cmd_read_attr_resp_message_t *
             xSemaphoreTake(s_devices_lock, portMAX_DELAY);
             int idx = find_device_by_short(msg->info.src_address.u.short_addr);
             if (idx >= 0) {
+                bool model_changed = strcmp(s_devices[idx].model, model) != 0;
+                bool supported_before = s_devices[idx].supported;
                 strlcpy(s_devices[idx].model, model, sizeof(s_devices[idx].model));
                 s_devices[idx].supported = strcmp(model, AQARA_MODEL_ID) == 0;
+                s_devices[idx].online = true;
+                s_last_seen_ms[idx] = now_ms();
+                if (msg->info.header.rssi != 0) s_devices[idx].last_rssi = msg->info.header.rssi;
                 if (s_devices[idx].supported) {
-                    save_devices();
+                    if (model_changed || !supported_before) save_devices();
                     xSemaphoreGive(s_devices_lock);
                     ESP_LOGW(TAG, "QBKG25LM model found at 0x%04x; control remains locked until physical channel mapping is confirmed",
                              msg->info.src_address.u.short_addr);
                     return;
                 }
-                ESP_LOGW(TAG, "Unsupported device 0x%04x model='%s'", msg->info.src_address.u.short_addr, model);
-                save_devices();
+                if (strcmp(model, LIGHTGW_ROUTER_MODEL_ID) == 0 ||
+                    strcmp(model, LIGHTGW_ROUTER_LEGACY_MODEL_ID) == 0) {
+                    ESP_LOGI(TAG, "Zigbee Router heartbeat short=0x%04x model='%s' rssi=%d",
+                             msg->info.src_address.u.short_addr, model, msg->info.header.rssi);
+                } else {
+                    ESP_LOGW(TAG, "Unsupported device 0x%04x model='%s'",
+                             msg->info.src_address.u.short_addr, model);
+                }
+                if (model_changed || supported_before) save_devices();
             }
             xSemaphoreGive(s_devices_lock);
         }
@@ -1157,6 +1186,8 @@ esp_err_t zigbee_manager_get_channel_status(uint16_t short_addr, unsigned channe
     if (!status || channel > 2 || !s_devices_lock) return ESP_ERR_INVALID_ARG;
     memset(status, 0, sizeof(*status));
     status->state = ZB_CHANNEL_UNKNOWN;
+    status->display_state = ZB_CHANNEL_UNKNOWN;
+    status->display_age_us = -1;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(short_addr);
     if (idx < 0 || !s_devices[idx].mapping_confirmed || !s_devices[idx].endpoints[channel]) {
@@ -1178,6 +1209,16 @@ esp_err_t zigbee_manager_get_channel_status(uint16_t short_addr, unsigned channe
         status->updated_us = cached.updated_ms * 1000;
         status->last_known_updated_us = cached.last_known_updated_ms * 1000;
         if (cached.valid) status->state = cached.value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
+        zb_cache_value_t display_value = ZB_CACHE_UNKNOWN;
+        int64_t display_age_ms = -1;
+        status->display_valid = zb_state_cache_get_display(
+            &s_state_cache, short_addr, status->endpoint, now_ms(),
+            APP_ZIGBEE_DISPLAY_HOLD_MS, &display_value, &display_age_ms);
+        if (status->display_valid) {
+            status->display_state = display_value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
+            status->display_from_cache = !cached.valid;
+            status->display_age_us = display_age_ms * 1000;
+        }
     }
     xSemaphoreGive(s_devices_lock);
     return status->known_endpoint ? ESP_OK : ESP_ERR_NOT_FOUND;
@@ -1190,6 +1231,8 @@ esp_err_t zigbee_manager_get_endpoint_status(uint16_t short_addr, uint8_t endpoi
     memset(status, 0, sizeof(*status));
     status->endpoint = endpoint;
     status->state = ZB_CHANNEL_UNKNOWN;
+    status->display_state = ZB_CHANNEL_UNKNOWN;
+    status->display_age_us = -1;
     xSemaphoreTake(s_devices_lock, portMAX_DELAY);
     int idx = find_device_by_short(short_addr);
     bool discovered = false;
@@ -1215,6 +1258,16 @@ esp_err_t zigbee_manager_get_endpoint_status(uint16_t short_addr, uint8_t endpoi
         status->updated_us = cached.updated_ms * 1000;
         status->last_known_updated_us = cached.last_known_updated_ms * 1000;
         if (cached.valid) status->state = cached.value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
+        zb_cache_value_t display_value = ZB_CACHE_UNKNOWN;
+        int64_t display_age_ms = -1;
+        status->display_valid = zb_state_cache_get_display(
+            &s_state_cache, short_addr, endpoint, now_ms(), APP_ZIGBEE_DISPLAY_HOLD_MS,
+            &display_value, &display_age_ms);
+        if (status->display_valid) {
+            status->display_state = display_value == ZB_CACHE_ON ? ZB_CHANNEL_ON : ZB_CHANNEL_OFF;
+            status->display_from_cache = !cached.valid;
+            status->display_age_us = display_age_ms * 1000;
+        }
     }
     xSemaphoreGive(s_devices_lock);
     return status->known_endpoint ? ESP_OK : ESP_ERR_NOT_FOUND;

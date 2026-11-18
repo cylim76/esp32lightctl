@@ -160,6 +160,26 @@ bool zb_state_cache_get(zb_state_cache_t *cache, uint16_t short_addr, uint8_t en
     return true;
 }
 
+bool zb_state_cache_get_display(zb_state_cache_t *cache, uint16_t short_addr, uint8_t endpoint,
+                                int64_t now_ms, uint32_t display_max_age_ms,
+                                zb_cache_value_t *value, int64_t *age_ms)
+{
+    zb_state_cache_entry_t entry;
+    if (value) *value = ZB_CACHE_UNKNOWN;
+    if (age_ms) *age_ms = -1;
+    if (!zb_state_cache_get(cache, short_addr, endpoint, now_ms, &entry) ||
+        !entry.last_known_valid || entry.last_known_updated_ms <= 0 ||
+        now_ms < entry.last_known_updated_ms) {
+        return false;
+    }
+    int64_t age = now_ms - entry.last_known_updated_ms;
+    if ((uint64_t)age > display_max_age_ms) return false;
+    if (entry.last_known_value != ZB_CACHE_ON && entry.last_known_value != ZB_CACHE_OFF) return false;
+    if (value) *value = entry.last_known_value;
+    if (age_ms) *age_ms = age;
+    return true;
+}
+
 void zb_state_cache_invalidate_device(zb_state_cache_t *cache, const uint8_t ieee[8])
 {
     if (!cache || !ieee) return;

@@ -162,6 +162,45 @@ static void test_read_timeout_preserves_diagnostic_last_known_only(void)
           state.consecutive_failures == 0 && !state.read_timed_out);
 }
 
+static void test_display_hold_survives_poll_timeout_without_confirming_control(void)
+{
+    zb_state_cache_init(&cache, 1000, 100);
+    zb_state_cache_device_announced(&cache, IEEE_A, 0x1111, 0);
+    CHECK(zb_state_cache_register_endpoint(&cache, IEEE_A, 0x1111, 3));
+    CHECK(zb_state_cache_update(&cache, 0x1111, 3, ZB_CACHE_ON, 10));
+    CHECK(zb_state_cache_begin_read(&cache, 0x1111, 3, 20));
+
+    zb_state_cache_entry_t authoritative;
+    CHECK(zb_state_cache_get(&cache, 0x1111, 3, 121, &authoritative));
+    CHECK(!authoritative.valid && authoritative.read_timed_out);
+
+    zb_cache_value_t display = ZB_CACHE_UNKNOWN;
+    int64_t display_age = -1;
+    CHECK(zb_state_cache_get_display(&cache, 0x1111, 3, 121, 150, &display, &display_age));
+    CHECK(display == ZB_CACHE_ON && display_age == 111);
+    CHECK(!zb_state_cache_get_display(&cache, 0x1111, 3, 161, 150, &display, &display_age));
+}
+
+static void test_display_hold_isolated_and_cleared_by_repair(void)
+{
+    zb_state_cache_init(&cache, 1000, 100);
+    zb_state_cache_device_announced(&cache, IEEE_A, 0x1111, 0);
+    zb_state_cache_device_announced(&cache, IEEE_B, 0x2222, 0);
+    CHECK(zb_state_cache_register_endpoint(&cache, IEEE_A, 0x1111, 1));
+    CHECK(zb_state_cache_register_endpoint(&cache, IEEE_B, 0x2222, 1));
+    CHECK(zb_state_cache_update(&cache, 0x1111, 1, ZB_CACHE_OFF, 10));
+    CHECK(zb_state_cache_update(&cache, 0x2222, 1, ZB_CACHE_ON, 20));
+    zb_cache_value_t display = ZB_CACHE_UNKNOWN;
+    CHECK(zb_state_cache_get_display(&cache, 0x1111, 1, 30, 150, &display, NULL));
+    CHECK(display == ZB_CACHE_OFF);
+    CHECK(zb_state_cache_get_display(&cache, 0x2222, 1, 30, 150, &display, NULL));
+    CHECK(display == ZB_CACHE_ON);
+    zb_state_cache_device_announced(&cache, IEEE_A, 0x3333, 40);
+    CHECK(!zb_state_cache_get_display(&cache, 0x3333, 1, 40, 150, &display, NULL));
+    CHECK(zb_state_cache_get_display(&cache, 0x2222, 1, 40, 150, &display, NULL));
+    CHECK(display == ZB_CACHE_ON);
+}
+
 static void test_repair_invalidates_generation(void)
 {
     zb_state_cache_init(&cache, 1000, 100);
@@ -469,6 +508,8 @@ void app_main(void)
     RUN(test_expired_off_is_invalid);
     RUN(test_read_timeout_rejects_old_off);
     RUN(test_read_timeout_preserves_diagnostic_last_known_only);
+    RUN(test_display_hold_survives_poll_timeout_without_confirming_control);
+    RUN(test_display_hold_isolated_and_cleared_by_repair);
     RUN(test_repair_invalidates_generation);
     RUN(test_fresh_feedback_after_timeout_recovers);
     RUN(test_short_address_reuse_isolated);

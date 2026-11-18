@@ -14,22 +14,24 @@ set(app_sources
 )
 set(app_requires
     esp_coex esp_event esp_http_server esp_netif esp_system esp_timer esp_wifi espcoredump
-    driver json lightgw_i2c_bus lwip mbedtls mdns nvs_flash
+    driver espressif__mdns json lightgw_i2c_bus lwip mbedtls nvs_flash
 )
 
 # Read the variant through an ESP-IDF build property. Component dependency
 # discovery runs in an early expansion context where ordinary parent-scope
 # CMake variables are empty, while build properties remain available.
 idf_build_get_property(lightgw_build_variant LIGHTGW_VARIANT_NAME)
+idf_build_get_property(lightgw_build_stage LIGHTGW_STAGE_NAME)
 
-if(LIGHTGW_STAGE GREATER_EQUAL 2)
+if(lightgw_build_stage GREATER_EQUAL 2)
     list(APPEND app_sources "zigbee_manager.c" "zigbee_state_cache.c" "zigbee_recovery.c"
          "zigbee_nvram_migration.c" "zigbee_control_retry.c")
+    list(APPEND app_requires espressif__esp-zigbee-lib)
 endif()
-if(LIGHTGW_STAGE GREATER_EQUAL 4)
+if(lightgw_build_stage GREATER_EQUAL 4)
     list(APPEND app_sources "scheduler.c" "scheduler_persistence.c" "device_control.c" "device_state.c")
 endif()
-if(LIGHTGW_STAGE GREATER_EQUAL 5)
+if(lightgw_build_stage GREATER_EQUAL 5)
     list(APPEND app_sources
         "ir_manager.c"
         "ir_receiver.c"

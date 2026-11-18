@@ -9,6 +9,17 @@ if(_lightgw_variant_index EQUAL -1)
     message(FATAL_ERROR "LIGHTGW_VARIANT must be STAGE, CORE, CORE_SENSOR, CORE_CLOUD, or FULL")
 endif()
 
+# Prefer an already downloaded component cache for offline local builds.  The
+# cache is intentionally gitignored; a clean clone falls back to the pinned
+# versions in main/idf_component.yml through IDF Component Manager.
+if(EXISTS "${CMAKE_SOURCE_DIR}/managed_components/espressif__mdns/CMakeLists.txt" AND
+   EXISTS "${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-zigbee-lib/CMakeLists.txt")
+    list(APPEND EXTRA_COMPONENT_DIRS
+        "${CMAKE_SOURCE_DIR}/managed_components/espressif__mdns"
+        "${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-zigbee-lib"
+    )
+endif()
+
 if(NOT LIGHTGW_VARIANT STREQUAL "STAGE")
     # All named variants contain the complete Stage 5 Core and share its stable
     # partition layout. Extension selection never changes core data addresses.
@@ -43,12 +54,35 @@ else()
     set(PROJECT_VER "0.12.1-stage${LIGHTGW_STAGE}")
 endif()
 
+# Keep clean Windows builds independent from child-process PATH inheritance.
+# build-stage.bat passes this already validated directory; CI/Linux builds do
+# not set it and continue using ESP-IDF's normal toolchain discovery.
+if(LIGHTGW_TOOLCHAIN_BIN)
+    file(TO_CMAKE_PATH "${LIGHTGW_TOOLCHAIN_BIN}" _lightgw_toolchain_bin)
+    set(ENV{PATH} "${_lightgw_toolchain_bin};$ENV{PATH}")
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Only traverse the application and its declared dependency graph. Besides
 # making builds deterministic, this avoids pulling unrelated IDF components
 # (Bluetooth, MQTT, OpenThread) into a Wi-Fi + Zigbee-only firmware.
 idf_build_set_property(MINIMAL_BUILD ON)
 idf_build_set_property(LIGHTGW_VARIANT_NAME "${LIGHTGW_VARIANT}")
+idf_build_set_property(LIGHTGW_STAGE_NAME "${LIGHTGW_STAGE}")
+if(CMAKE_MAKE_PROGRAM)
+    idf_build_set_property(EXTRA_CMAKE_ARGS
+        "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}" APPEND)
+endif()
+if(_lightgw_toolchain_bin)
+    idf_build_set_property(EXTRA_CMAKE_ARGS
+        "-DCMAKE_PROGRAM_PATH=${_lightgw_toolchain_bin}" APPEND)
+    idf_build_set_property(EXTRA_CMAKE_ARGS
+        "-DCMAKE_C_COMPILER=${_lightgw_toolchain_bin}/riscv32-esp-elf-gcc.exe" APPEND)
+    idf_build_set_property(EXTRA_CMAKE_ARGS
+        "-DCMAKE_CXX_COMPILER=${_lightgw_toolchain_bin}/riscv32-esp-elf-g++.exe" APPEND)
+    idf_build_set_property(EXTRA_CMAKE_ARGS
+        "-DCMAKE_ASM_COMPILER=${_lightgw_toolchain_bin}/riscv32-esp-elf-gcc.exe" APPEND)
+endif()
 project(esp32c6_light_gateway)
 
 # rmaker_common 1.9.x/1.10.x checks an IDF-6 CMake version variable which is

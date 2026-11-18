@@ -8,7 +8,7 @@
 
 - ESP32-C6 集成 2.4 GHz Wi-Fi 与 IEEE 802.15.4，ESP Zigbee SDK 自 0.5.4 起明确加入了 C6 单芯片 Wi-Fi/Zigbee gateway coexist 支持。本工程启用 `CONFIG_ESP_COEX_SW_COEXIST_ENABLE`，Wi-Fi 使用 `WIFI_PS_MIN_MODEM`，并调用 `esp_coex_wifi_i154_enable()`。
 - 这不是“同时双接收”：C6 的两个协议共享射频和单天线，由软件仲裁分时使用。Espressif 对正式 Wi-Fi Zigbee 网关仍推荐 ESP32-S3 + ESP32-H2 双 SoC/双天线，以获得同时接收能力。因此本方案在功能上可行，但高 Wi-Fi 占空比、弱信号和拥挤 2.4 GHz 环境下的丢包率/配对率必须在现场验证。
-- 固定版本为 **ESP-IDF 5.5.1 + esp-zigbee-lib 1.6.8 + esp-zboss-lib 1.6.4**。1.6.8 是官方仍维护的 1.x LTS，并明确基于 IDF 5.5.1；没有把 2026 年 2.x 新栈 API 与旧示例混用。
+- 当前主线固定为 **ESP-IDF 5.5.1 + esp-zigbee-lib 2.0.5**，Coordinator 与专用 Router 都使用同一代 2.x API。历史 Stage 1～4 固件仍按原构建记录保留，不会被本次源码升级冒充为重新验证后的镜像。
 - 上游资料把 QBKG25LM 的 Zigbee model 标识为 `lumi.switch.l3acn3`，并通过标准 ZCL On/Off Cluster `0x0006` 控制。`state_left` 等只是 Zigbee2MQTT 的上层属性名，不是 Zigbee 命令。端点编号及其左/中/右关系必须由本项目的 Stage 3 在实机上采集，不能直接照搬上游映射。
 - 经验证的开源转换器还会向 Aqara 厂商 Cluster `0xFCC0`、属性 `0x0009`（UINT8）、厂商码 `0x115F` 写入 `1`。Stage 3 只记录 Active Endpoints、Simple Descriptors 和 Cluster；Stage 4 也只有在用户根据实机日志明确确认三个不同的 On/Off server 端点后，才解锁控制和执行该初始化。
 
@@ -108,11 +108,11 @@ idf.py -B build-stage4 -D LIGHTGW_STAGE=4 build
 idf.py -B build-stage5 -D LIGHTGW_STAGE=5 build
 ```
 
-Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-lib =1.6.8`、`esp-zboss-lib =1.6.4` 和官方 `mdns =1.14.1`。不要把约束改成 `*` 或直接用 SDK main 分支。
+Component Manager 会严格解析 `main/idf_component.yml` 中的 `esp-zigbee-lib =2.0.5` 和官方 `mdns =1.14.1`。本地已经下载的 `managed_components` 可用于离线构建，但不会提交到 Git；干净克隆会按上述固定版本下载依赖。不要把约束改成 `*` 或直接使用 SDK main 分支。
 
 ### 本地编译验证记录
 
-2026-11-03 在 Windows 上使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0、`esp-zigbee-lib 1.6.8` 和 `esp-zboss-lib 1.6.4`，分别对 Stage 1～5 执行了真实 `idf.py build`。当前源码的构建结果、应用大小及 SHA-256 记录在 [BUILD.md](BUILD.md)；[firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt) 仅对应未改写的既有发布镜像。这些结果只证明编译与链接通过，不代表硬件测试通过。
+历史 Stage 1～5 的独立构建记录仍保存在 [BUILD.md](BUILD.md)。2026-11-18 又使用 ESP-IDF 5.5.1、RISC-V GCC 14.2.0 和 `esp-zigbee-lib 2.0.5` 对当前 Stage 4 主网关及专用 Router 执行了真实编译和烧录；[firmware/SHA256SUMS.txt](firmware/SHA256SUMS.txt) 只对应未改写的既有发布镜像。编译与写入校验通过不等同于所有硬件场景均已通过。
 
 Phase A 的控制边界见 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [DEVICE_CONTROL.md](DEVICE_CONTROL.md)。可烧录 C 测试工程位于 `tests/phase_a_app`。
 
@@ -128,21 +128,75 @@ Flash/NVS 写入点、分区用途、非破坏性恢复策略和迁移风险见 
 
 ## USB 烧录与监控
 
-将 DevKitC-1 的 USB 口连接电脑，先识别串口，再执行：
+### Windows 驱动和一次性准备
+
+1. 使用支持数据传输的 USB 线，先在 Windows“设备管理器 → 端口 (COM 和 LPT)”确认端口号。
+2. 乐鑫原厂板的原生 USB 口通常由 Windows 10/11 自动识别为 USB Serial/JTAG；能够出现 COM 端口时不需要重复安装驱动。
+3. 使用 CP2102/CP2102N USB-UART 的副厂板需要 Silicon Labs CP210x Universal Windows Driver；使用 CH340/CH341 的板需要相应 WCH 驱动。应以板载 USB-UART 芯片型号为准。
+4. 安装 ESP-IDF 5.5.1 及 ESP32-C6 工具链。每个新命令行窗口先执行 `export.bat`；本仓库脚本也会尝试自动加载与仓库同级的 `esp-idf-5.5.1`。
+
+当前电脑的示例目录：
+
+```bat
+cd /d D:\RPA\esp32lightctl
+call D:\RPA\esp-idf-5.5.1\export.bat
+```
+
+### 主网关
+
+先按需编译，再烧录。例如当前 Stage 4 主网关位于 COM12：
+
+```bat
+build-stage.bat 4
+flash.bat COM12 4
+monitor.bat COM12 4
+```
+
+如果仓库内已经存在对应的 `build-stage4` 或预编译 `firmware/stage4` 文件，可直接执行 `flash.bat COM12 4`。普通 `flash` 不擦除 NVS、Zigbee 持久化分区或定时配置。
+
+验证其他 Stage 时只更改最后的编号：
 
 ```bat
 flash.bat COM7 1
-monitor.bat COM7 1
-```
-
-依次验证其他 Stage 时只更改最后的阶段编号，例如：
-
-```bat
 flash.bat COM7 2
 flash.bat COM7 3
 flash.bat COM7 4
 flash.bat COM7 5
 ```
+
+### 专用 Zigbee Router
+
+Router 是独立固件，不使用 Stage/Variant 命令。当前示例端口为 COM8：
+
+```bat
+build-router.bat
+flash-router.bat COM8
+monitor-router.bat COM8
+```
+
+只有第一次把一块普通/旧网关开发板转换成 Router 时才使用：
+
+```bat
+flash-router.bat COM8 fresh
+```
+
+`fresh` 会清除**所指定端口开发板的整个 Flash**，包括原组网数据。必须先核对 COM 端口，严禁对办公室主网关使用。已经入网的 Router 日常升级只执行不带 `fresh` 的命令，以保留其网络身份。详细入网、状态和测试边界见 [ZIGBEE_ROUTER.md](ZIGBEE_ROUTER.md)。
+
+### 图形化烧录工具
+
+也可使用 Espressif Flash Download Tool 或经过确认的卖家工具。每种固件都必须使用自己构建目录中的三个匹配文件，不能把主网关和 Router 的应用或分区表混用。
+
+| 地址 | 主网关 Stage 4 | Zigbee Router |
+|---:|---|---|
+| `0x0000` | `build-stage4/bootloader/bootloader.bin` | `build-router/bootloader/bootloader.bin` |
+| `0x8000` | `build-stage4/partition_table/partition-table.bin` | `build-router/partition_table/partition-table.bin` |
+| `0x10000` | `build-stage4/esp32c6_light_gateway.bin` | `build-router/esp32c6_zigbee_router.bin` |
+
+建议参数：ESP32-C6、8 MB、DIO、80 MHz、460800 baud；线材或串口不稳定时降为 115200 baud。烧录地址由当前分区表确定，若以后分区表变更，应以对应构建目录中的 `flash_args` 为准，不要凭经验猜测地址。
+
+### 下载模式、监视和清除警告
+
+脚本通常会自动复位进入下载模式。若一直停在 `Connecting...`：按住 **BOOT**，短按 **RESET**，松开 **BOOT** 后重新执行烧录。正常运行不需要按住 BOOT，也不应永久短接下载引脚。
 
 Linux 示例：
 
@@ -150,9 +204,9 @@ Linux 示例：
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-退出 monitor：`Ctrl+]`。若板子没有自动进入下载模式，按住 **BOOT**，短按 **RESET**，松开 **BOOT** 后重试。
+退出 monitor：`Ctrl+]`。
 
-彻底清除 Wi-Fi、管理密码、设备表和 Zigbee 网络（会要求所有 Zigbee 设备重新配对）：
+以下命令会彻底清除主网关的 Wi-Fi、管理密码、设备表和 Zigbee 网络，并要求所有设备重新配对；除明确执行恢复出厂/重新建网外不要使用：
 
 ```bat
 idf.py -p COM7 erase-flash flash monitor

@@ -49,4 +49,7 @@ bool zb_state_cache_update(zb_state_cache_t *cache, uint16_t short_addr, uint8_t
                            zb_cache_value_t value, int64_t now_ms);
 bool zb_state_cache_get(zb_state_cache_t *cache, uint16_t short_addr, uint8_t endpoint,
                         int64_t now_ms, zb_state_cache_entry_t *out);
+bool zb_state_cache_get_display(zb_state_cache_t *cache, uint16_t short_addr, uint8_t endpoint,
+                                int64_t now_ms, uint32_t display_max_age_ms,
+                                zb_cache_value_t *value, int64_t *age_ms);
 void zb_state_cache_invalidate_device(zb_state_cache_t *cache, const uint8_t ieee[8]);

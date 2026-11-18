@@ -478,6 +478,11 @@ static esp_err_t status_get(httpd_req_t *req)
         cJSON_AddStringToObject(d, "ieee", ieee);
         cJSON_AddStringToObject(d, "model", devices[i].model);
         cJSON_AddBoolToObject(d, "supported", devices[i].supported);
+        const char *device_kind = devices[i].supported ? "aqara_d1" :
+                                  (strcmp(devices[i].model, LIGHTGW_ROUTER_MODEL_ID) == 0 ||
+                                   strcmp(devices[i].model, LIGHTGW_ROUTER_LEGACY_MODEL_ID) == 0) ?
+                                  "zigbee_router" : "generic";
+        cJSON_AddStringToObject(d, "device_kind", device_kind);
         cJSON_AddBoolToObject(d, "mapping_confirmed", devices[i].mapping_confirmed);
         cJSON_AddBoolToObject(d, "online", devices[i].online);
         int64_t last_seen_age_ms = -1;
@@ -498,6 +503,11 @@ static esp_err_t status_get(httpd_req_t *req)
             cJSON_AddBoolToObject(detail, "read_timed_out", channel.read_timed_out);
             cJSON_AddBoolToObject(detail, "last_known_valid", channel.last_known_valid);
             cJSON_AddNumberToObject(detail, "last_known_state", channel.last_known_state);
+            cJSON_AddBoolToObject(detail, "display_valid", channel.display_valid);
+            cJSON_AddBoolToObject(detail, "display_from_cache", channel.display_from_cache);
+            cJSON_AddNumberToObject(detail, "display_state", channel.display_state);
+            cJSON_AddNumberToObject(detail, "display_age_seconds",
+                                    channel.display_age_us >= 0 ? channel.display_age_us / 1000000 : -1);
             cJSON_AddNumberToObject(detail, "consecutive_failures", channel.consecutive_failures);
             cJSON_AddNumberToObject(detail, "updated_uptime_ms", channel.updated_us / 1000);
             cJSON_AddNumberToObject(detail, "last_known_updated_uptime_ms", channel.last_known_updated_us / 1000);
@@ -522,6 +532,12 @@ static esp_err_t status_get(httpd_req_t *req)
             cJSON_AddBoolToObject(endpoint_json, "read_timed_out", endpoint_status.read_timed_out);
             cJSON_AddBoolToObject(endpoint_json, "last_known_valid", endpoint_status.last_known_valid);
             cJSON_AddNumberToObject(endpoint_json, "last_known_state", endpoint_status.last_known_state);
+            cJSON_AddBoolToObject(endpoint_json, "display_valid", endpoint_status.display_valid);
+            cJSON_AddBoolToObject(endpoint_json, "display_from_cache", endpoint_status.display_from_cache);
+            cJSON_AddNumberToObject(endpoint_json, "display_state", endpoint_status.display_state);
+            cJSON_AddNumberToObject(endpoint_json, "display_age_seconds",
+                                    endpoint_status.display_age_us >= 0 ?
+                                    endpoint_status.display_age_us / 1000000 : -1);
             cJSON_AddNumberToObject(endpoint_json, "consecutive_failures", endpoint_status.consecutive_failures);
             cJSON_AddNumberToObject(endpoint_json, "updated_uptime_ms", endpoint_status.updated_us / 1000);
             cJSON_AddNumberToObject(endpoint_json, "last_known_updated_uptime_ms", endpoint_status.last_known_updated_us / 1000);
