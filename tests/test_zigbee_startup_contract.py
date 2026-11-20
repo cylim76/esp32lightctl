@@ -53,7 +53,12 @@ assert "`${names[channel]}${on?'开启':'关闭'}`" in page
 assert 'id="scheduleCards"' in page
 assert "function addScheduleCard(" in page
 assert "MAX_SCHEDULE_CARDS=8" in page
-assert 'class="entry-time" type="time"' in page
+assert 'class="entry-time" type="text" inputmode="numeric" maxlength="5"' in page
+assert 'placeholder="HH:MM"' in page
+assert "function parseScheduleTime(value)" in page
+assert "function normalizeScheduleTime(input)" in page
+assert "时间必须使用 24 小时格式 HH:MM，例如 13:00" in page
+assert 'class="entry-time" type="time"' not in page
 assert "class=\"entry-hour\"" not in page and "class=\"entry-minute\"" not in page
 assert "统一失败重试与补执行" in page
 assert "补执行有效期（分钟）" in page
